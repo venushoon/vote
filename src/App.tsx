@@ -114,11 +114,12 @@ export default function App() {
   // 공개 여부
   const now = Date.now();
   const isVisible = useMemo(() => {
+    if (viewMode === "admin") return true; // 👈 관리자는 항상 보임
     if (visibilityMode === "always") return true;
     if (visibilityMode === "hidden") return false;
-    if (!deadlineAt) return false;
+    if (!deadlineAt) return false; // 마감시간 미설정 시 숨김
     return now >= deadlineAt;
-  }, [visibilityMode, deadlineAt, now]);
+  }, [viewMode, visibilityMode, deadlineAt, now]);
 
   /** ===== 옵션 편집 ===== */
   function setOptionLabel(id: string, label: string) {
@@ -199,12 +200,24 @@ export default function App() {
   }
 
   /** ===== 관리자: 초기화/삭제 ===== */
-  function clearAll() {
-    if (!confirm("모든 결과를 초기화할까요? (되돌릴 수 없음)")) return;
-    setBallots({});
-    setOptions((prev) => prev.map((o) => ({ ...o, votes: 0 })));
-    setSelected([]);
-  }
+function clearAll() {
+  if (!confirm("모든 설정과 결과를 초기화할까요? (되돌릴 수 없음)")) return;
+
+  // 기본 상태로 리셋
+  setTitle("우리 반 결정 투표");
+  setDesc("설명을 입력하세요. 예) 체험학습 장소를 골라요!");
+  setVoteLimit(1);
+  setOptions([
+    { id: uuid(), label: "보기 1", votes: 0 },
+    { id: uuid(), label: "보기 2", votes: 0 },
+  ]);
+  setBallots({});
+  setAnonymous(false);
+  setVisibilityMode("always");
+  setDeadlineAt(null);
+  setSelected([]);
+  setSaveHint("전체 초기화 완료!");
+}
   function removeVoter(id: string) {
     if (!confirm(`${id}의 투표를 삭제할까요?`)) return;
     const info = ballots[id];
