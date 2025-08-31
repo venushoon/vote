@@ -661,5 +661,3 @@ function StudentView(props: any) {
         </div>
       </div>
     </main>
-  );
-}
