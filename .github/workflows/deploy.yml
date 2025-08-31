@@ -5,6 +5,12 @@ on:
     branches: ["main"]
   workflow_dispatch:
 
+# 👇 여기가 중요
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
