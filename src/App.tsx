@@ -290,18 +290,17 @@ export default function App() {
     e.target.value = ""; // 같은 파일 재선택 허용
   }
 
-  /** ===== 링크/QR ===== */
-  const studentLink = useMemo(() => {
-    const url = new URL(location.href);
-    url.hash = "#student";
-    return url.toString();
-  }, []);
+ // ====== 공유 링크/QR ======
+const studentLink = useMemo(() => {
+  const { origin, pathname } = window.location;
+  return `${origin}${pathname}#student`;
+}, [viewMode]);  // 해시/화면 모드 변경 시 재계산
 
-  function copyStudentLink() {
-    navigator.clipboard
-      .writeText(studentLink)
-      .then(() => setSaveHint("학생용 링크를 복사했어요."));
-  }
+function copyStudentLink() {
+  navigator.clipboard
+    .writeText(studentLink)
+    .then(() => setSaveHint("학생용 링크를 복사했어요."));
+}
 
   /** ===== 렌더 ===== */
   return (
