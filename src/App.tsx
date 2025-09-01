@@ -73,7 +73,7 @@ export default function App() {
   // 저장 힌트
   const [saveHint, setSaveHint] = useState("");
 
-  // 로컬스토리지
+  // 로컬스토리지 (기기별 유지)
   const STORAGE_KEY = "classroom_vote_v2";
   useEffect(() => {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -211,6 +211,24 @@ export default function App() {
     setSelected([]);
   }
 
+  /** ===== 투표자 삭제 ===== */
+  function removeVoter(id: string) {
+    if (!confirm(`${id}의 투표를 삭제할까요?`)) return;
+    const info = ballots[id];
+    if (!info) return;
+    setOptions((prev) =>
+      prev.map((o) => ({
+        ...o,
+        votes: o.votes - (info.ids.includes(o.id) ? 1 : 0),
+      }))
+    );
+    setBallots((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  }
+
   /** ===== 전체 초기화(제목/설명/옵션/설정/결과 모두) ===== */
   function clearAll() {
     if (!confirm("모든 설정과 결과를 초기화할까요? (되돌릴 수 없음)")) return;
@@ -295,7 +313,7 @@ export default function App() {
       }
     };
     reader.readAsText(file, "utf-8");
-    e.target.value = ""; // 같은 파일 재선택 허용
+    e.target.value = "";
   }
 
   /** ===== URL(?p=토큰)으로부터 설정 복원 ===== */
@@ -326,18 +344,17 @@ export default function App() {
   }, []); // 최초 1회
 
   /** ===== 공유 링크(학생용) ===== */
-  // 저장을 누르기 전에도 즉시 테스트 가능한 라이브 링크
+  // (1) 저장 전에도 즉시 테스트 가능한 라이브 링크
   const studentLinkLive = useMemo(() => {
     const { origin, pathname } = window.location;
     return `${origin}${pathname}#student`;
   }, [viewMode]);
 
-  // 저장(공유링크 갱신)으로 생성되는 고정 링크
+  // (2) 저장(공유링크 갱신)으로 생성되는 고정 링크
   const [shareLink, setShareLink] = useState<string>("");
   const effectiveStudentLink = shareLink || studentLinkLive;
 
   function buildSharePayload() {
-    // 학생 쪽에서 필요한 설정만 (표수/투표자 기록 제외)
     return {
       title,
       desc,
