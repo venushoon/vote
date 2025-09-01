@@ -3,3 +3,16 @@
 @tailwind utilities;
 
 /* 추가 커스텀 스타일이 필요하면 아래에 작성 */
+/* --- compact buttons --- */
+.btn-compact {
+  @apply px-3 py-1.5 text-sm rounded-lg whitespace-nowrap; /* 줄바꿈 방지 */
+}
+.btn-compact-primary {
+  @apply btn-compact bg-indigo-600 text-white hover:bg-indigo-700 shadow;
+}
+.btn-compact-outline {
+  @apply btn-compact bg-white border hover:bg-gray-50 shadow;
+}
+.btn-compact-success {
+  @apply btn-compact bg-emerald-600 text-white hover:bg-emerald-700;
+}
