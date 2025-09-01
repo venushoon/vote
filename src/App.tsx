@@ -28,7 +28,7 @@ function uuid() {
 function getViewMode(): ViewMode {
   return location.hash === "#student" ? "student" : "admin";
 }
-// URL-safe Base64 (공유 토큰)
+// URL-safe Base64 인코딩/디코딩 (공유 토큰)
 function encodePollToken(data: any) {
   const json = JSON.stringify(data);
   const b64 = btoa(unescape(encodeURIComponent(json)));
@@ -387,6 +387,9 @@ function AdminView({
   clearAll, recountVotes, removeVoter, saveHint, setSaveHint,
   effectiveStudentLink, saveAndMakeShareLink,
 }: AdminProps) {
+  // 링크 텍스트 토글(기본 숨김)
+  const [showLink, setShowLink] = useState(false);
+
   return (
     <main className="max-w-6xl mx-auto px-4 py-6 grid md:grid-cols-5 gap-6">
       {/* 왼쪽: 설정 & 관리 */}
@@ -456,7 +459,7 @@ function AdminView({
           </div>
         </div>
 
-        {/* 학생용 링크 & QR — 콤팩트 */}
+        {/* 학생용 링크 & QR — 콤팩트, 주소 기본 숨김 */}
         <div className="bg-white rounded-2xl shadow p-4">
           <div className="flex items-center justify-between">
             <h2 className="font-semibold">학생용 화면 링크</h2>
@@ -494,10 +497,27 @@ function AdminView({
             <div className="flex items-center justify-center p-3 bg-gray-50 rounded-xl border">
               <QRCode value={effectiveStudentLink} size={150} />
             </div>
-            <div className="text-xs md:text-sm text-gray-600 break-all leading-relaxed">
-              {effectiveStudentLink}
+
+            <div className="text-xs md:text-sm text-gray-600 leading-relaxed">
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setShowLink((v) => !v)}
+                  className="px-2 py-1 text-[11px] rounded border"
+                  title={showLink ? "주소 숨기기" : "주소 보기"}
+                >
+                  {showLink ? "주소 숨기기" : "주소 보기"}
+                </button>
+                <span className="text-[11px] text-gray-500">(QR을 스캔해 접속하세요)</span>
+              </div>
+
+              {showLink && (
+                <div className="mt-2 break-all text-[11px] bg-gray-50 border rounded p-2">
+                  {effectiveStudentLink}
+                </div>
+              )}
+
               <p className="mt-2 text-[11px] md:text-xs text-gray-500">
-                저장 후 생성된 링크/QR을 공유하면 어떤 기기에서 열어도 동일한 설정이 적용됩니다.
+                저장 후 생성된 QR/링크를 공유하면 어떤 기기에서 열어도 동일한 설정이 적용됩니다.
               </p>
             </div>
           </div>
@@ -575,7 +595,7 @@ function AdminView({
             <h2 className="font-semibold">실시간 결과</h2>
             <div className="text-sm text-gray-500">총 {totalVotes}표</div>
           </div>
-          <div className="w-full h-[360px]">
+        <div className="w-full h-[360px]">
             {isVisible ? (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={graphData} margin={{ top: 20, right: 20, bottom: 20, left: 0 }}>
