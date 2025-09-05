@@ -578,6 +578,7 @@ function AdminView(props: any) {
     saveToLocalNow,
   } = props;
 
+  const [showLink, setShowLink] = useState<boolean>(false);
   const votedCount = Object.keys(ballots).length;
   const ballotEntries: Array<[string, Ballot]> = Object.entries(ballots as Record<string, Ballot>) as Array<
     [string, Ballot]
@@ -754,20 +755,45 @@ function AdminView(props: any) {
               <button onClick={saveToLocalNow} className="px-3 py-1.5 text-sm rounded-lg bg-white border hover:bg-gray-50">
                 저장
               </button>
-              <button onClick={copyStudentLink} className="px-3 py-1.5 text-sm rounded-lg bg-white border hover:bg-gray-50">
-                복사
+              <button onClick={() => setShowLink((v) => !v)} className="px-3 py-1.5 text-sm rounded-lg bg-white border hover:bg-gray-50">
+                {showLink ? "숨기기" : "주소 보기"}
               </button>
               <a href={studentLink} className="px-3 py-1.5 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">
                 열기
               </a>
             </div>
           </div>
+
           <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
             <div className="flex items-center justify-center p-3 bg-gray-50 rounded-xl border">
               <QRCode value={studentLink} size={160} />
             </div>
-            <div className="text-sm text-gray-600 break-all leading-relaxed">
-              {studentLink}
+
+            {/* 긴 주소는 기본 숨김 → 버튼으로 펼치기 */}
+            <div className="text-sm text-gray-600 leading-relaxed">
+              {!showLink ? (
+                <p className="text-xs text-gray-500">
+                  주소는 숨김 상태입니다. <span className="font-medium">[주소 보기]</span>를 눌러 확인하거나,
+                  바로 <span className="font-medium">복사</span>하세요.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  <input
+                    value={studentLink}
+                    readOnly
+                    className="w-full text-xs border rounded-lg px-2 py-1 break-all"
+                    onFocus={(e) => e.currentTarget.select()}
+                  />
+                  <div className="flex gap-2">
+                    <button onClick={copyStudentLink} className="px-2 py-1 text-xs rounded-md bg-white border hover:bg-gray-50">
+                      복사
+                    </button>
+                    <button onClick={() => setShowLink(false)} className="px-2 py-1 text-xs rounded-md bg-white border hover:bg-gray-50">
+                      숨기기
+                    </button>
+                  </div>
+                </div>
+              )}
               <p className="mt-2 text-xs text-gray-500">
                 저장 후 생성된 QR/링크를 공유하면 동일한 설정으로 학생 화면을 열 수 있어요.
               </p>
