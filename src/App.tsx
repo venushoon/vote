@@ -234,7 +234,7 @@ export default function App() {
         if (idx >= 0) opts[idx].votes = (opts[idx].votes || 0) + 1;
       });
       return { ...data, ballots: ballotsObj, options: opts, updatedAt: Date.now() };
-    }).then((res: TransactionResult<any>) => {
+    }).then((res: TransactionResult) => {   // ✅ 제네릭 제거
       if (res.committed) {
         setVoterName("");
         setSelected([]);
@@ -380,7 +380,6 @@ export default function App() {
             <div className="flex items-center gap-2">
               <button onClick={saveJSON} className="px-3 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 shadow">JSON 저장</button>
               <button onClick={saveCSV} className="px-3 py-2 rounded-xl bg-white border hover:bg-gray-50 shadow">CSV 저장</button>
-              {/* ✅ 불러오기 버튼 복원 */}
               <button onClick={() => fileInputRef.current?.click()} className="px-3 py-2 rounded-xl bg-white border hover:bg-gray-50 shadow">불러오기</button>
               <input ref={fileInputRef} type="file" accept="application/json" className="hidden" onChange={loadFromFile} />
             </div>
@@ -550,13 +549,13 @@ function AdminView(props: any) {
           </div>
         </div>
 
-        {/* 보기(옵션) */}
+        {/* 보기(옵션) — ✅ 저장 버튼은 여기만 남김 */}
         <div className="bg-white rounded-2xl shadow p-4">
           <div className="flex items-center justify-between">
             <h2 className="font-semibold">보기(옵션)</h2>
             <div className="flex items-center gap-2">
               <button onClick={addOption} className="px-3 py-1.5 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">추가</button>
-              <button onClick={saveToCloud} className="px-3 py-1.5 text-sm rounded-lg bg-white border hover:bg-gray-50">저장</button>
+              <button onClick={saveToCloud} className="px-3 py-1.5 text-sm rounded-lg bg-white border hover:bg-gray-50" title="현재 옵션/설정을 DB에 저장하고 QR/링크를 갱신합니다">저장</button>
             </div>
           </div>
           <ul className="mt-3 space-y-2">
@@ -574,12 +573,11 @@ function AdminView(props: any) {
           </div>
         </div>
 
-        {/* 학생 링크 & QR */}
+        {/* 학생 링크 & QR — ❌ 저장 버튼 제거 */}
         <div className="bg-white rounded-2xl shadow p-4">
           <div className="flex items-center justify-between">
             <h2 className="font-semibold">학생용 화면 링크</h2>
             <div className="flex items-center gap-2">
-              <button onClick={saveToCloud} className="px-3 py-1.5 text-sm rounded-lg bg-white border hover:bg-gray-50">저장</button>
               <button onClick={() => setShowLink((v: boolean) => !v)} className="px-3 py-1.5 text-sm rounded-lg bg-white border hover:bg-gray-50">{showLink ? "숨기기" : "주소 보기"}</button>
               <a href={studentLink} className="px-3 py-1.5 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">열기</a>
             </div>
