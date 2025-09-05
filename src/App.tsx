@@ -151,7 +151,7 @@ export default function App() {
   const isVisibleAdmin = visibilityMode === "hidden" ? true : baseVisible;
   const isVisibleStudent = baseVisible;
 
-  const graphData = useMemo(() => options.map(o => ({ name: o.label, votes: o.votes })), [options]);
+  const graphData = useMemo(() => options.map((o: Option) => ({ name: o.label, votes: o.votes })), [options]);
 
   // 학생 링크 & QR
   const studentLink = useMemo(() => {
@@ -182,7 +182,7 @@ export default function App() {
   // 옵션 편집
   function setOptionLabel(id: string, label: string) {
     setOptions(prev => {
-      const next = prev.map(o => (o.id === id ? { ...o, label } : o));
+      const next = prev.map((o: Option) => (o.id === id ? { ...o, label } : o));
       patchPoll({ options: next });
       return next;
     });
@@ -195,7 +195,7 @@ export default function App() {
   }
   function removeOption(id: string) {
     if (!pollId) return;
-    const next = options.filter(o => o.id !== id);
+    const next = options.filter((o: Option) => o.id !== id);
     setOptions(next);
     runTransaction(ref(db, pollPath(pollId)), (data: any) => {
       if (!data) return data;
@@ -206,9 +206,9 @@ export default function App() {
         newBallots[k] = { ...info, ids };
       });
       const countMap: Record<string, number> = {};
-      next.forEach(o => (countMap[o.id] = 0));
+      next.forEach((o: Option) => (countMap[o.id] = 0));
       Object.values(newBallots).forEach((b: any) => (b.ids || []).forEach((oid: string) => (countMap[oid] = (countMap[oid] || 0) + 1)));
-      const fixedOptions = next.map(o => ({ ...o, votes: countMap[o.id] || 0 }));
+      const fixedOptions = next.map((o: Option) => ({ ...o, votes: countMap[o.id] || 0 }));
       return { ...data, options: fixedOptions, ballots: newBallots, updatedAt: Date.now() };
     });
   }
@@ -216,7 +216,7 @@ export default function App() {
     if (!pollId) return;
     runTransaction(ref(db, pollPath(pollId)), (data: any) => {
       if (!data) return data;
-      const opts = data.options || [];
+      const opts: Option[] = data.options || [];
       const ballotsObj = data.ballots || {};
       const countMap: Record<string, number> = {};
       opts.forEach((o: Option) => (countMap[o.id] = 0));
@@ -229,18 +229,21 @@ export default function App() {
   // 투표 제출
   const [voterName, setVoterName] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
+
+  // ✅ 항상 string을 반환하도록 보장
   function getStudentKey(): string {
     if (anonymous) {
       const keyName = `vote_device_token_${pollId || "temp"}`;
-      let key = localStorage.getItem(keyName); // string | null
+      let key: string = localStorage.getItem(keyName) || "";
       if (!key) {
         key = uuid();
         localStorage.setItem(keyName, key);
       }
-      return key as string; // ✅ 항상 string으로 반환
+      return key;
     }
     return voterName.trim();
   }
+
   function submitVote() {
     if (!pollId) return alert("방이 아직 준비되지 않았습니다. 잠시 후 다시 시도하세요.");
     if (isClosed) return alert("투표가 마감되었습니다.");
@@ -255,7 +258,7 @@ export default function App() {
       const ids = selected.slice(0, data.voteLimit || 1);
       const nowMs = Date.now();
       ballotsObj[key] = { ids, at: nowMs, name: data.anonymous ? undefined : (voterName.trim() || undefined) };
-      const opts = (data.options || []).map((o: Option) => ({ ...o }));
+      const opts: Option[] = (data.options || []).map((o: Option) => ({ ...o }));
       ids.forEach((id: string) => {
         const idx = opts.findIndex((o: Option) => o.id === id);
         if (idx >= 0) opts[idx].votes = (opts[idx].votes || 0) + 1;
@@ -281,7 +284,7 @@ export default function App() {
       const info = ballotsObj[id];
       if (!info) return data;
       delete ballotsObj[id];
-      const opts = (data.options || []).map((o: Option) => ({ ...o }));
+      const opts: Option[] = (data.options || []).map((o: Option) => ({ ...o }));
       (info.ids || []).forEach((oid: string) => {
         const idx = opts.findIndex((o: Option) => o.id === oid);
         if (idx >= 0) opts[idx].votes = Math.max(0, (opts[idx].votes || 0) - 1);
@@ -323,7 +326,7 @@ export default function App() {
   }
   function saveCSV() {
     const head = "option,votes\n";
-    const rows = options.map(o => `${escapeCSV(o.label)},${o.votes}`).join("\n");
+    const rows = options.map((o: Option) => `${escapeCSV(o.label)},${o.votes}`).join("\n");
     const csv = head + rows;
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     download(`vote-summary-${stamp}.csv`, csv, "text/csv");
@@ -346,11 +349,11 @@ export default function App() {
         const data = JSON.parse(String(ev.target?.result || "{}"));
         if (typeof data.title === "string") setTitle(data.title);
         if (typeof data.desc === "string") setDesc(data.desc);
-        if (data.voteLimit === 1 || data.voteLimit === 2) setVoteLimit(data.voteLimit);
-        if (Array.isArray(data.options)) setOptions(data.options);
-        if (data.ballots && typeof data.ballots === "object") setBallots(data.ballots);
+        if (data.voteLimit === 1 || data.voteLimit === 2) setVoteLimit(data.voteLimit as VoteLimit);
+        if (Array.isArray(data.options)) setOptions(data.options as Option[]);
+        if (data.ballots && typeof data.ballots === "object") setBallots(data.ballots as Record<string, Ballot>);
         if (typeof data.anonymous === "boolean") setAnonymous(data.anonymous);
-        if (data.visibilityMode) setVisibilityMode(data.visibilityMode);
+        if (data.visibilityMode) setVisibilityMode(data.visibilityMode as Visibility);
         setDeadlineAt(data.deadlineAt ?? null);
 
         const evNum = Number(data.expectedVoters ?? 0);
