@@ -14,7 +14,6 @@
     "strict": true
       "compilerOptions": {
     "types": ["vite/client"],      // ← env 타입
-    "moduleResolution": "bundler"  // vite5 권장 (없으면 "node"도 가능)
   },
     "include": ["src"]
 }
