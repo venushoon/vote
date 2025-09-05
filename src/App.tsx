@@ -5,28 +5,11 @@ import {
 } from "recharts";
 import QRCode from "react-qr-code";
 
-// ---- Firebase ----
-import { initializeApp } from "firebase/app";
-import {
-  getDatabase, ref, onValue, set, update, runTransaction,
-} from "firebase/database";
+// 🔌 Firebase 연결은 .env + src/firebase.ts 에서 처리
+import { ref, onValue, set, update, runTransaction } from "firebase/database";
+import { db } from "./firebase";
 
-// 1) 여기에 본인 Firebase 설정을 붙여 넣으세요.
-const firebaseConfig = {
-  apiKey: "AIzaSyBzUs5-KbLJKRuDb11U4DrKqFVqCKZpeag",
-  authDomain: "classroom-vote.firebaseapp.com",
-  databaseURL: "https://classroom-vote-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "classroom-vote",
-  storageBucket: "classroom-vote.firebasestorage.app",
-  messagingSenderId: "30789774999",
-  appId: "1:30789774999:web:22e569d542b919519043d2",
-};
-
-// Firebase 초기화 (중복 방지)
-const app = initializeApp(firebaseConfig);
-const db = getDatabase(app);
-
-// ---- 상수/타입/유틸 ----
+// ===== 상수/타입/유틸 =====
 const DEFAULT_DESC = "설명을 입력하세요. 예) 체험학습 장소를 골라요!";
 type Visibility = "always" | "hidden" | "deadline";
 type VoteLimit = 1 | 2;
@@ -60,10 +43,10 @@ function makeDefaultState() {
   };
 }
 
-// DB 경로 도우미
+// DB 경로
 const pollPath = (pollId: string) => `polls/${pollId}`;
 
-// ---- 메인 앱 ----
+// ===== 메인 앱 =====
 export default function App() {
   const [viewMode, setViewMode] = useState<"admin" | "student">(getViewMode());
   useEffect(() => {
@@ -78,11 +61,9 @@ export default function App() {
     const url = new URL(window.location.href);
     let pid = url.searchParams.get("pid") || "";
     if (!pid) {
-      // 새 방 생성
-      pid = Math.random().toString(36).slice(2, 8);
+      pid = Math.random().toString(36).slice(2, 8); // 새 방
       const base = makeDefaultState();
       set(ref(db, pollPath(pid)), base);
-      // URL 반영(히스토리 교체)
       url.searchParams.set("pid", pid);
       window.history.replaceState({}, "", url.toString());
     }
@@ -148,20 +129,20 @@ export default function App() {
 
   const graphData = useMemo(() => options.map((o) => ({ name: o.label, votes: o.votes })), [options]);
 
-  // 링크 (pid 고정, v는 새로고침 유도용)
+  // 학생용 링크 (pid 고정, v는 QR 재생성 유도)
   const studentLink = useMemo(() => {
     if (!pollId) return location.href;
     const url = new URL(window.location.href);
     url.hash = "#student";
     url.searchParams.set("pid", pollId);
-    url.searchParams.set("v", String(linkVersion)); // QR 업데이트용
+    url.searchParams.set("v", String(linkVersion));
     return url.toString();
   }, [pollId, linkVersion]);
 
   const copyStudentLink = () =>
     navigator.clipboard.writeText(studentLink).then(() => setSaveHint("학생용 링크를 복사했어요."));
 
-  // 공용: DB 업데이트(일부 필드)
+  // 공용: DB 업데이트(부분 patch)
   function patchPoll(fields: Partial<any>) {
     if (!pollId) return;
     fields.updatedAt = Date.now();
@@ -195,7 +176,7 @@ export default function App() {
   function removeOption(id: string) {
     const next = options.filter((o) => o.id !== id);
     setOptions(next);
-    // 투표에서 해당 선택 제거 & 표수 재계산은 서버 트랜잭션으로 처리
+    // 서버 트랜잭션으로 표/투표 정합성 유지
     runTransaction(ref(db, pollPath(pollId)), (data: any) => {
       if (!data) return data;
       const ballotsObj = data.ballots || {};
@@ -204,7 +185,6 @@ export default function App() {
         const ids = (info.ids || []).filter((x: string) => x !== id);
         newBallots[k] = { ...info, ids };
       });
-      // 표수 재계산
       const countMap: Record<string, number> = {};
       next.forEach((o) => (countMap[o.id] = 0));
       Object.values(newBallots).forEach((b: any) => (b.ids || []).forEach((oid: string) => (countMap[oid] = (countMap[oid] || 0) + 1)));
@@ -212,8 +192,6 @@ export default function App() {
       return { ...data, options: fixedOptions, ballots: newBallots, updatedAt: Date.now() };
     });
   }
-
-  // 표수 재계산(서버 기준)
   function recountVotes() {
     runTransaction(ref(db, pollPath(pollId)), (data: any) => {
       if (!data) return data;
@@ -227,13 +205,13 @@ export default function App() {
     });
   }
 
-  // 투표 제출(중복 방지 + 표수 증가를 트랜잭션으로)
+  // 투표 제출(트랜잭션)
   const [voterName, setVoterName] = useState<string>("");
   const [selected, setSelected] = useState<string[]>([]);
   function getStudentKey(): string {
     if (anonymous) {
-      const existing = localStorage.getItem(`vote_device_token_${pollId}`);
-      if (existing) return existing;
+      const k = localStorage.getItem(`vote_device_token_${pollId}`);
+      if (k) return k;
       const t = uuid();
       localStorage.setItem(`vote_device_token_${pollId}`, t);
       return t;
@@ -249,11 +227,7 @@ export default function App() {
     runTransaction(ref(db, pollPath(pollId)), (data: any) => {
       if (!data) return data;
       const ballotsObj = data.ballots || {};
-      if (ballotsObj[key]) {
-        // 이미 투표함
-        return data;
-      }
-      // 표 반영
+      if (ballotsObj[key]) return data; // 중복 방지
       const ids = selected.slice(0, data.voteLimit || 1);
       const nowMs = Date.now();
       ballotsObj[key] = { ids, at: nowMs, name: data.anonymous ? undefined : (voterName.trim() || undefined) };
@@ -273,7 +247,7 @@ export default function App() {
     });
   }
 
-  // 투표자 삭제(관리자)
+  // 투표자 삭제
   function removeVoter(id: string) {
     if (!confirm(`${id}의 투표를 삭제할까요?`)) return;
     runTransaction(ref(db, pollPath(pollId)), (data: any) => {
@@ -291,20 +265,20 @@ export default function App() {
     });
   }
 
-  // 전체 초기화(해당 pollId 방을 기본값으로 덮어쓰기)
+  // 전체 초기화
   function resetAllToDefaults() {
     if (!confirm("모든 설정과 결과를 기본값으로 초기화할까요? (현재 방의 데이터가 삭제됩니다)")) return;
     const fresh = makeDefaultState();
     set(ref(db, pollPath(pollId)), fresh);
     setSaveHint("기본값으로 초기화됨");
-    setLinkVersion((v) => v + 1); // QR 갱신 유도(선택사항)
+    setLinkVersion((v) => v + 1);
   }
 
   // 마감/재개
   const closeNow = () => patchPoll({ manualClosed: true });
   const reopen = () => patchPoll({ manualClosed: false });
 
-  // CSV/JSON 저장(클라이언트 다운로드)
+  // CSV/JSON 저장(다운로드)
   function download(filename: string, text: string, mime = "application/json") {
     const blob = new Blob([text], { type: `${mime};charset=utf-8` });
     const url = URL.createObjectURL(blob);
@@ -412,6 +386,7 @@ export default function App() {
             studentLink, copyStudentLink,
             showLink, setShowLink,
             resetAllToDefaults,
+            removeVoter,
           }}
         />
       ) : (
@@ -447,6 +422,7 @@ function AdminView(props: any) {
     studentLink, copyStudentLink,
     showLink, setShowLink,
     resetAllToDefaults,
+    removeVoter,
   } = props;
 
   const votedCount = Object.keys(ballots || {}).length;
@@ -616,7 +592,7 @@ function AdminView(props: any) {
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="text-xs text-gray-500">{info.ids?.join(", ")}</div>
-                    <button onClick={() => props.removeVoter?.(id)} className="px-2 py-1 text-xs rounded-md bg-white border hover:bg-gray-50">삭제</button>
+                    <button onClick={() => removeVoter(id)} className="px-2 py-1 text-xs rounded-md bg-white border hover:bg-gray-50">삭제</button>
                   </div>
                 </li>
               ))}
