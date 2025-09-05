@@ -26,6 +26,16 @@ function getView(): "admin" | "student" {
 }
 function pollPath(pid: string) { return `polls/${pid}`; }
 
+// URL에서 pid를 안전하게 가져오는 헬퍼
+function getPidFromURL(): string {
+  try {
+    const url = new URL(location.href);
+    return url.searchParams.get("pid") || "";
+  } catch {
+    return "";
+  }
+}
+
 function defaultState() {
   const opts: Option[] = [
     { id: uuid(), label: "보기 1", votes: 0 },
@@ -56,7 +66,6 @@ export default function App() {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
 
-  // 초기 부팅/방 생성/구독 준비 플래그
   const [isBooting, setIsBooting] = useState(true);
 
   // 방 ID
@@ -79,10 +88,9 @@ export default function App() {
   const [linkVersion, setLinkVersion] = useState(0);
   const [showLink, setShowLink] = useState(false);
 
-  // 파일 불러오기 input
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // ===== 안전한 초기화 =====
+  // ===== 안전한 초기화/구독 =====
   useEffect(() => {
     let unsub: (() => void) | undefined;
 
@@ -93,8 +101,7 @@ export default function App() {
 
         if (!pid) {
           pid = Math.random().toString(36).slice(2, 8);
-          const initial = defaultState();
-          await set(ref(db, pollPath(pid)), initial);
+          await set(ref(db, pollPath(pid)), defaultState());
           url.searchParams.set("pid", pid);
           history.replaceState({}, "", url.toString());
         }
@@ -119,7 +126,6 @@ export default function App() {
           setExpectedVotersText(String(isNaN(ev) ? 0 : ev));
 
           setManualClosed(!!data.manualClosed);
-
           setIsBooting(false);
         });
       } catch (e) {
@@ -147,16 +153,16 @@ export default function App() {
     return now >= deadlineAt;
   }, [visibilityMode, deadlineAt, now]);
 
-  // '항상 숨김'은 학생에서만 숨김
   const isVisibleAdmin = visibilityMode === "hidden" ? true : baseVisible;
   const isVisibleStudent = baseVisible;
 
-  const graphData = useMemo(() => options.map((o: Option) => ({ name: o.label, votes: o.votes })), [options]);
+  const graphData = useMemo(() => options.map(o => ({ name: o.label, votes: o.votes })), [options]);
 
   // 학생 링크 & QR
   const studentLink = useMemo(() => {
     const url = new URL(location.href);
-    if (pollId) url.searchParams.set("pid", pollId);
+    const pid = pollId || getPidFromURL();
+    if (pid) url.searchParams.set("pid", pid);
     url.hash = "#student";
     url.searchParams.set("v", String(linkVersion));
     return url.toString();
@@ -167,13 +173,15 @@ export default function App() {
 
   // 공통 patch
   function patchPoll(fields: Partial<any>) {
-    if (!pollId) return;
-    update(ref(db, pollPath(pollId)), { ...fields, updatedAt: Date.now() });
+    const pid = pollId || getPidFromURL();
+    if (!pid) return;
+    update(ref(db, pollPath(pid)), { ...fields, updatedAt: Date.now() });
   }
 
   // 저장
   function saveToCloud() {
-    if (!pollId) return;
+    const pid = pollId || getPidFromURL();
+    if (!pid) return;
     patchPoll({ title, desc, voteLimit, options, anonymous, visibilityMode, deadlineAt, expectedVoters, manualClosed });
     setLinkVersion(v => v + 1);
     setSaveHint("저장됨 (실시간 공유/QR/링크 반영)");
@@ -182,7 +190,7 @@ export default function App() {
   // 옵션 편집
   function setOptionLabel(id: string, label: string) {
     setOptions(prev => {
-      const next = prev.map((o: Option) => (o.id === id ? { ...o, label } : o));
+      const next = prev.map(o => (o.id === id ? { ...o, label } : o));
       patchPoll({ options: next });
       return next;
     });
@@ -194,10 +202,11 @@ export default function App() {
     patchPoll({ options: next });
   }
   function removeOption(id: string) {
-    if (!pollId) return;
-    const next = options.filter((o: Option) => o.id !== id);
+    const pid = pollId || getPidFromURL();
+    if (!pid) return;
+    const next = options.filter(o => o.id !== id);
     setOptions(next);
-    runTransaction(ref(db, pollPath(pollId)), (data: any) => {
+    runTransaction(ref(db, pollPath(pid)), (data: any) => {
       if (!data) return data;
       const ballotsObj = data.ballots || {};
       const newBallots: Record<string, Ballot> = {};
@@ -206,17 +215,18 @@ export default function App() {
         newBallots[k] = { ...info, ids };
       });
       const countMap: Record<string, number> = {};
-      next.forEach((o: Option) => (countMap[o.id] = 0));
+      next.forEach(o => (countMap[o.id] = 0));
       Object.values(newBallots).forEach((b: any) => (b.ids || []).forEach((oid: string) => (countMap[oid] = (countMap[oid] || 0) + 1)));
-      const fixedOptions = next.map((o: Option) => ({ ...o, votes: countMap[o.id] || 0 }));
+      const fixedOptions = next.map(o => ({ ...o, votes: countMap[o.id] || 0 }));
       return { ...data, options: fixedOptions, ballots: newBallots, updatedAt: Date.now() };
     });
   }
   function recountVotes() {
-    if (!pollId) return;
-    runTransaction(ref(db, pollPath(pollId)), (data: any) => {
+    const pid = pollId || getPidFromURL();
+    if (!pid) return;
+    runTransaction(ref(db, pollPath(pid)), (data: any) => {
       if (!data) return data;
-      const opts: Option[] = data.options || [];
+      const opts = data.options || [];
       const ballotsObj = data.ballots || {};
       const countMap: Record<string, number> = {};
       opts.forEach((o: Option) => (countMap[o.id] = 0));
@@ -230,10 +240,10 @@ export default function App() {
   const [voterName, setVoterName] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
 
-  // ✅ 항상 string을 반환하도록 보장
-  function getStudentKey(): string {
-    if (anonymous) {
-      const keyName = `vote_device_token_${pollId || "temp"}`;
+  // 항상 string을 반환하고, pid 의존
+  function getStudentKey(pid: string, isAnonymous: boolean): string {
+    if (isAnonymous) {
+      const keyName = `vote_device_token_${pid || "temp"}`;
       let key: string = localStorage.getItem(keyName) || "";
       if (!key) {
         key = uuid();
@@ -245,20 +255,23 @@ export default function App() {
   }
 
   function submitVote() {
-    if (!pollId) return alert("방이 아직 준비되지 않았습니다. 잠시 후 다시 시도하세요.");
+    // ✅ 제출 시에도 URL에서 pid 재확인하여 '방이 아직...' 방지
+    const pid = pollId || getPidFromURL();
+    if (!pid) return alert("방이 아직 준비되지 않았습니다. 잠시 후 다시 시도하세요.");
     if (isClosed) return alert("투표가 마감되었습니다.");
-    const key = getStudentKey();
+
+    const key = getStudentKey(pid, anonymous);
     if (!key) return alert("이름/번호를 입력하세요.");
     if (selected.length === 0) return alert("선택한 보기가 없습니다.");
 
-    runTransaction(ref(db, pollPath(pollId)), (data: any) => {
+    runTransaction(ref(db, pollPath(pid)), (data: any) => {
       if (!data) return data;
       const ballotsObj = data.ballots || {};
       if (ballotsObj[key]) return data; // 중복 방지
       const ids = selected.slice(0, data.voteLimit || 1);
       const nowMs = Date.now();
       ballotsObj[key] = { ids, at: nowMs, name: data.anonymous ? undefined : (voterName.trim() || undefined) };
-      const opts: Option[] = (data.options || []).map((o: Option) => ({ ...o }));
+      const opts = (data.options || []).map((o: Option) => ({ ...o }));
       ids.forEach((id: string) => {
         const idx = opts.findIndex((o: Option) => o.id === id);
         if (idx >= 0) opts[idx].votes = (opts[idx].votes || 0) + 1;
@@ -276,15 +289,16 @@ export default function App() {
 
   // 투표자 삭제
   function removeVoter(id: string) {
-    if (!pollId) return;
+    const pid = pollId || getPidFromURL();
+    if (!pid) return;
     if (!confirm(`${id}의 투표를 삭제할까요?`)) return;
-    runTransaction(ref(db, pollPath(pollId)), (data: any) => {
+    runTransaction(ref(db, pollPath(pid)), (data: any) => {
       if (!data) return data;
       const ballotsObj = { ...(data.ballots || {}) };
       const info = ballotsObj[id];
       if (!info) return data;
       delete ballotsObj[id];
-      const opts: Option[] = (data.options || []).map((o: Option) => ({ ...o }));
+      const opts = (data.options || []).map((o: Option) => ({ ...o }));
       (info.ids || []).forEach((oid: string) => {
         const idx = opts.findIndex((o: Option) => o.id === oid);
         if (idx >= 0) opts[idx].votes = Math.max(0, (opts[idx].votes || 0) - 1);
@@ -293,21 +307,22 @@ export default function App() {
     });
   }
 
-  // 전체 초기화
+  // 전체 초기화(같은 pid 유지)
   function resetAllToDefaults() {
-    if (!pollId) return alert("방이 아직 준비되지 않았습니다.");
+    const pid = pollId || getPidFromURL();
+    if (!pid) return alert("방이 아직 준비되지 않았습니다.");
     if (!confirm("모든 설정과 결과를 기본값으로 초기화할까요?")) return;
-    set(ref(db, pollPath(pollId)), defaultState()).then(() => {
+    set(ref(db, pollPath(pid)), defaultState()).then(() => {
       setSaveHint("기본값으로 초기화됨");
       setLinkVersion(v => v + 1);
     });
   }
 
   // 마감/재개
-  const closeNow = () => { if (pollId) patchPoll({ manualClosed: true }); };
-  const reopen   = () => { if (pollId) patchPoll({ manualClosed: false }); };
+  const closeNow = () => { const pid = pollId || getPidFromURL(); if (pid) update(ref(db, pollPath(pid)), { manualClosed: true, updatedAt: Date.now() }); };
+  const reopen   = () => { const pid = pollId || getPidFromURL(); if (pid) update(ref(db, pollPath(pid)), { manualClosed: false, updatedAt: Date.now() }); };
 
-  // CSV/JSON 저장
+  // CSV/JSON 저장/불러오기 (동일)
   function download(filename: string, text: string, mime = "application/json") {
     const blob = new Blob([text], { type: `${mime};charset=utf-8` });
     const url = URL.createObjectURL(blob);
@@ -317,7 +332,7 @@ export default function App() {
   }
   function saveJSON() {
     const payload = JSON.stringify(
-      { title, desc, voteLimit, options, ballots, anonymous, visibilityMode, deadlineAt, expectedVoters, manualClosed, pollId },
+      { title, desc, voteLimit, options, ballots, anonymous, visibilityMode, deadlineAt, expectedVoters, manualClosed, pollId: pollId || getPidFromURL() },
       null, 2
     );
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -326,7 +341,7 @@ export default function App() {
   }
   function saveCSV() {
     const head = "option,votes\n";
-    const rows = options.map((o: Option) => `${escapeCSV(o.label)},${o.votes}`).join("\n");
+    const rows = options.map(o => `${escapeCSV(o.label)},${o.votes}`).join("\n");
     const csv = head + rows;
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     download(`vote-summary-${stamp}.csv`, csv, "text/csv");
@@ -339,7 +354,6 @@ export default function App() {
     return needs ? `"${out}"` : out;
   }
 
-  // JSON 불러오기
   function loadFromFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -359,7 +373,6 @@ export default function App() {
         const evNum = Number(data.expectedVoters ?? 0);
         setExpectedVoters(isNaN(evNum) ? 0 : evNum);
         setExpectedVotersText(String(isNaN(evNum) ? 0 : evNum));
-
         setManualClosed(!!data.manualClosed);
 
         patchPoll({
@@ -378,7 +391,6 @@ export default function App() {
     e.target.value = "";
   }
 
-  // 투표 인원 입력
   function onExpectedChange(e: React.ChangeEvent<HTMLInputElement>) {
     const raw = e.target.value ?? "";
     setExpectedVotersText(raw);
@@ -388,16 +400,12 @@ export default function App() {
     patchPoll({ expectedVoters: num });
   }
 
-  // 로딩 가드
   if (isBooting) {
-    return (
-      <div className="min-h-screen grid place-items-center text-gray-500">
-        초기화 중입니다…
-      </div>
-    );
+    return <div className="min-h-screen grid place-items-center text-gray-500">초기화 중입니다…</div>;
   }
 
-  // ===== 렌더 =====
+  const pidReady = !!(pollId || getPidFromURL());
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-white to-gray-50 text-gray-900">
       {/* 상단바 */}
@@ -475,12 +483,13 @@ export default function App() {
             visibilityMode, deadlineAt, isVisible: isVisibleStudent,
             voterName, setVoterName, selected, setSelected, submitVote,
             totalVotes, graphData, isClosed,
+            pidReady,
           }}
         />
       )}
 
       <footer className="max-w-6xl mx-auto px-4 pb-10 text-xs text-gray-400">
-        방 ID: <span className="font-mono">{pollId}</span> · Made for classroom by 교무
+        방 ID: <span className="font-mono">{pollId || getPidFromURL()}</span> · Made for classroom by 교무
       </footer>
     </div>
   );
@@ -617,7 +626,7 @@ function AdminView(props: any) {
           </div>
         </div>
 
-        {/* 학생 링크 & QR — 저장 버튼 제거 */}
+        {/* 학생 링크 & QR */}
         <div className="bg-white rounded-2xl shadow p-4">
           <div className="flex items-center justify-between">
             <h2 className="font-semibold">학생용 화면 링크</h2>
@@ -679,7 +688,7 @@ function AdminView(props: any) {
         <div className="bg-white rounded-2xl shadow p-4 h-[460px]">
           <div className="flex items-center justify-between">
             <h2 className="font-semibold">실시간 결과</h2>
-            <div className="text-sm text-gray-500">참여 {votedCount} · 총 {totalVotes}표</div>
+            <div className="text-sm text-gray-500">참여 {Object.keys(ballots || {}).length} · 총 {totalVotes}표</div>
           </div>
           <div className="w-full h-[400px]">
             {isVisible ? (
@@ -729,6 +738,7 @@ function StudentView(props: any) {
     visibilityMode, deadlineAt, isVisible,
     voterName, setVoterName, selected, setSelected,
     submitVote, totalVotes, graphData, isClosed,
+    pidReady,
   } = props;
 
   const [submitted, setSubmitted] = useState(false);
@@ -788,7 +798,14 @@ function StudentView(props: any) {
 
         <div className="mt-4 flex items-center justify-between">
           <a href="#admin" className="text-xs text-gray-400 underline">관리자 화면</a>
-          <button onClick={onSubmit} className="px-4 py-2 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed" disabled={isClosed}>제출</button>
+          <button
+            onClick={onSubmit}
+            className="px-4 py-2 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={isClosed || !pidReady}  // ✅ pid 확정 전 제출 비활성화
+            title={!pidReady ? "방이 준비되는 중입니다…" : undefined}
+          >
+            제출
+          </button>
         </div>
 
         {submitted && <div className="mt-3 text-sm text-emerald-700">제출되었습니다. 감사합니다!</div>}
