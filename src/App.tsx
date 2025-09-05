@@ -1,3 +1,4 @@
+// --- App.tsx (TypeScript 'any' 오류 제거 / pid 안정화 버전) ---
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -5,12 +6,11 @@ import {
 } from "recharts";
 import QRCode from "react-qr-code";
 
-// Firebase
 import { ref, onValue, set, update, runTransaction } from "firebase/database";
 import type { DataSnapshot } from "firebase/database";
 import { db } from "./firebase";
 
-/* ===================== 공통 타입/유틸 ===================== */
+/* ========= Types & utils ========= */
 type Visibility = "always" | "hidden" | "deadline";
 type VoteLimit = 1 | 2;
 type Option = { id: string; label: string; votes: number };
@@ -29,12 +29,8 @@ const getView = (): "admin" | "student" =>
 const pollPath = (pid: string) => `polls/${pid}`;
 
 const getPidFromURL = (): string => {
-  try {
-    const u = new URL(location.href);
-    return u.searchParams.get("pid") || "";
-  } catch {
-    return "";
-  }
+  try { return new URL(location.href).searchParams.get("pid") || ""; }
+  catch { return ""; }
 };
 
 const defaultState = () => {
@@ -58,7 +54,7 @@ const defaultState = () => {
   };
 };
 
-/* ===================== 메인 ===================== */
+/* ========= App ========= */
 export default function App() {
   const [viewMode, setViewMode] = useState<"admin" | "student">(getView());
   useEffect(() => {
@@ -69,7 +65,6 @@ export default function App() {
 
   const [isBooting, setIsBooting] = useState(true);
 
-  // 상태 (서버에서 동기화됨)
   const [pollId, setPollId] = useState<string>("");
 
   const [title, setTitle] = useState("우리 반 결정 투표");
@@ -89,11 +84,9 @@ export default function App() {
   const [showLink, setShowLink] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  /** 현재 사용해야 할 pid를 항상 반환 */
   const getActivePid = (): string =>
     pollId || getPidFromURL() || localStorage.getItem(LS_PID_KEY) || "";
 
-  /** pid를 URL/LocalStorage/State에 모두 반영 */
   const setPidEverywhere = (pid: string) => {
     if (!pid) return;
     setPollId(pid);
@@ -103,24 +96,18 @@ export default function App() {
     history.replaceState({}, "", u.toString());
   };
 
-  /* ========== 초기 부팅/구독 ========== */
   useEffect(() => {
     let unsub: (() => void) | undefined;
 
     async function boot() {
       try {
         let pid = getPidFromURL() || localStorage.getItem(LS_PID_KEY) || "";
-
-        // pid가 전혀 없으면 (보통 교사 화면에서 처음 진입)
         if (!pid) {
           pid = Math.random().toString(36).slice(2, 8);
           await set(ref(db, pollPath(pid)), defaultState());
         }
-
-        // URL/LS/state에 동기화
         setPidEverywhere(pid);
 
-        // 구독
         const r = ref(db, pollPath(pid));
         unsub = onValue(r, (snap: DataSnapshot) => {
           const data = snap.val();
@@ -140,7 +127,6 @@ export default function App() {
           setExpectedVotersText(String(evSafe));
           setManualClosed(!!data.manualClosed);
 
-          // 서버 데이터가 존재한다면 pid를 재확인해 보관(혹시 URL이 바뀐 경우 대비)
           setPidEverywhere(pid);
           setIsBooting(false);
         });
@@ -155,7 +141,6 @@ export default function App() {
     return () => { if (unsub) unsub(); };
   }, []);
 
-  /* ========== 파생값 ========== */
   const totalVotes = useMemo(
     () => options.reduce((a, b) => a + (b?.votes ?? 0), 0),
     [options]
@@ -175,36 +160,32 @@ export default function App() {
     return now >= deadlineAt;
   }, [visibilityMode, deadlineAt, now]);
 
-  // '항상 숨김'은 학생만 숨김
   const isVisibleAdmin = visibilityMode === "hidden" ? true : baseVisible;
   const isVisibleStudent = baseVisible;
 
   const graphData = useMemo(
-    () => options.map((o) => ({ name: o.label, votes: o.votes })),
+    () => options.map((o: Option) => ({ name: o.label, votes: o.votes })),
     [options]
   );
 
-  /* ========== 학생 링크/QR ========== */
   const studentLink = useMemo(() => {
     const pid = getActivePid();
     const u = new URL(location.href);
     if (pid) u.searchParams.set("pid", pid);
     u.hash = "#student";
-    u.searchParams.set("v", String(linkVersion)); // QR 캐시 무효화
+    u.searchParams.set("v", String(linkVersion));
     return u.toString();
-  }, [pollId, linkVersion]); // pollId 변동에도 재계산
+  }, [pollId, linkVersion]);
 
   const copyStudentLink = () =>
     navigator.clipboard.writeText(studentLink).then(() => setSaveHint("학생용 링크를 복사했어요."));
 
-  /* ========== DB Patch 유틸 ========== */
   const patchPoll = (fields: Partial<any>) => {
     const pid = getActivePid();
     if (!pid) return;
     update(ref(db, pollPath(pid)), { ...fields, updatedAt: Date.now() });
   };
 
-  /* ========== 저장(옵션 저장 버튼) ========== */
   const saveToCloud = () => {
     const pid = getActivePid();
     if (!pid) {
@@ -219,10 +200,9 @@ export default function App() {
     setSaveHint("저장됨 (QR/링크 반영)");
   };
 
-  /* ========== 옵션 편집 ========== */
   const setOptionLabel = (id: string, label: string) => {
-    setOptions((prev) => {
-      const next = prev.map((o) => (o.id === id ? { ...o, label } : o));
+    setOptions((prev: Option[]) => {
+      const next = prev.map((o: Option) => (o.id === id ? { ...o, label } : o));
       patchPoll({ options: next });
       return next;
     });
@@ -230,7 +210,7 @@ export default function App() {
 
   const addOption = () => {
     const label = `보기 ${options.length + 1}`;
-    const next = [...options, { id: uuid(), label, votes: 0 }];
+    const next: Option[] = [...options, { id: uuid(), label, votes: 0 }];
     setOptions(next);
     patchPoll({ options: next });
   };
@@ -238,7 +218,7 @@ export default function App() {
   const removeOption = (id: string) => {
     const pid = getActivePid();
     if (!pid) return;
-    const next = options.filter((o) => o.id !== id);
+    const next: Option[] = options.filter((o: Option) => o.id !== id);
     setOptions(next);
 
     runTransaction(ref(db, pollPath(pid)), (data: any) => {
@@ -251,12 +231,12 @@ export default function App() {
       });
 
       const countMap: Record<string, number> = {};
-      next.forEach((o) => (countMap[o.id] = 0));
+      next.forEach((o: Option) => (countMap[o.id] = 0));
       Object.values(newBallots).forEach((b: any) =>
         (b.ids || []).forEach((oid: string) => (countMap[oid] = (countMap[oid] || 0) + 1))
       );
 
-      const fixedOptions = next.map((o) => ({ ...o, votes: countMap[o.id] || 0 }));
+      const fixedOptions: Option[] = next.map((o: Option) => ({ ...o, votes: countMap[o.id] || 0 }));
       return { ...data, options: fixedOptions, ballots: newBallots, updatedAt: Date.now() };
     });
   };
@@ -269,16 +249,15 @@ export default function App() {
       const opts: Option[] = data.options || [];
       const ballotsObj = data.ballots || {};
       const countMap: Record<string, number> = {};
-      opts.forEach((o) => (countMap[o.id] = 0));
+      opts.forEach((o: Option) => (countMap[o.id] = 0));
       Object.values(ballotsObj).forEach((b: any) =>
         (b.ids || []).forEach((oid: string) => (countMap[oid] = (countMap[oid] || 0) + 1))
       );
-      const fixed = opts.map((o) => ({ ...o, votes: countMap[o.id] || 0 }));
+      const fixed: Option[] = opts.map((o: Option) => ({ ...o, votes: countMap[o.id] || 0 }));
       return { ...data, options: fixed, updatedAt: Date.now() };
     });
   };
 
-  /* ========== 투표 제출 ========== */
   const [voterName, setVoterName] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
 
@@ -307,7 +286,7 @@ export default function App() {
     runTransaction(ref(db, pollPath(pid)), (data: any) => {
       if (!data) return data;
       const ballotsObj = data.ballots || {};
-      if (ballotsObj[key]) return data; // 중복 방지
+      if (ballotsObj[key]) return data;
 
       const ids = selected.slice(0, data.voteLimit || 1);
       const nowMs = Date.now();
@@ -319,7 +298,7 @@ export default function App() {
 
       const opts: Option[] = (data.options || []).map((o: Option) => ({ ...o }));
       ids.forEach((id: string) => {
-        const idx = opts.findIndex((o) => o.id === id);
+        const idx = opts.findIndex((o: Option) => o.id === id);
         if (idx >= 0) opts[idx].votes = (opts[idx].votes || 0) + 1;
       });
 
@@ -334,7 +313,6 @@ export default function App() {
     });
   };
 
-  /* ========== 투표자 삭제 ========== */
   const removeVoter = (id: string) => {
     const pid = getActivePid();
     if (!pid) return;
@@ -347,9 +325,9 @@ export default function App() {
       if (!info) return data;
       delete ballotsObj[id];
 
-      const opts: Option[] = (data.options || []).map((o) => ({ ...o }));
+      const opts: Option[] = (data.options || []).map((o: Option) => ({ ...o }));
       (info.ids || []).forEach((oid: string) => {
-        const idx = opts.findIndex((o) => o.id === oid);
+        const idx = opts.findIndex((o: Option) => o.id === oid);
         if (idx >= 0) opts[idx].votes = Math.max(0, (opts[idx].votes || 0) - 1);
       });
 
@@ -357,17 +335,14 @@ export default function App() {
     });
   };
 
-  /* ========== 전체 초기화(같은 pid 유지) ========== */
   const resetAllToDefaults = () => {
     const pid = getActivePid();
     if (!pid) return alert("방이 아직 준비되지 않았습니다.");
     if (!confirm("모든 설정과 결과를 기본값으로 초기화할까요?")) return;
 
     set(ref(db, pollPath(pid)), defaultState()).then(() => {
-      // pid는 그대로 두고 DB만 리셋 => 모든 기기가 즉시 기본값을 수신
       setSaveHint("기본값으로 초기화됨");
       setLinkVersion((v) => v + 1);
-      // 상태도 즉시 기본값으로 맞춰 깜빡임/불일치 방지
       const d = defaultState();
       setTitle(d.title);
       setDesc(d.desc);
@@ -380,12 +355,10 @@ export default function App() {
       setExpectedVoters(d.expectedVoters);
       setExpectedVotersText(String(d.expectedVoters));
       setManualClosed(d.manualClosed);
-      // pid를 다시 확정 저장 (혹시 URL이 비워졌다면)
       setPidEverywhere(pid);
     });
   };
 
-  /* ========== 마감/재개 ========== */
   const closeNow = () => {
     const pid = getActivePid();
     if (pid) update(ref(db, pollPath(pid)), { manualClosed: true, updatedAt: Date.now() });
@@ -395,7 +368,6 @@ export default function App() {
     if (pid) update(ref(db, pollPath(pid)), { manualClosed: false, updatedAt: Date.now() });
   };
 
-  /* ========== JSON/CSV 저장 & 불러오기 ========== */
   const download = (filename: string, text: string, mime = "application/json") => {
     const blob = new Blob([text], { type: `${mime};charset=utf-8` });
     const url = URL.createObjectURL(blob);
@@ -413,8 +385,7 @@ export default function App() {
         anonymous, visibilityMode, deadlineAt,
         expectedVoters, manualClosed, pollId: getActivePid(),
       },
-      null,
-      2
+      null, 2
     );
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     download(`vote-result-${stamp}.json`, payload, "application/json");
@@ -423,7 +394,7 @@ export default function App() {
 
   const saveCSV = () => {
     const head = "option,votes\n";
-    const rows = options.map((o) => `${escapeCSV(o.label)},${o.votes}`).join("\n");
+    const rows = options.map((o: Option) => `${escapeCSV(o.label)},${o.votes}`).join("\n");
     const csv = head + rows;
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     download(`vote-summary-${stamp}.csv`, csv, "text/csv");
@@ -474,21 +445,14 @@ export default function App() {
     e.target.value = "";
   };
 
-  /* ========== 로딩 ========== */
   if (isBooting) {
-    return (
-      <div className="min-h-screen grid place-items-center text-gray-500">
-        초기화 중입니다…
-      </div>
-    );
+    return <div className="min-h-screen grid place-items-center text-gray-500">초기화 중입니다…</div>;
   }
 
   const pidReady = !!getActivePid();
 
-  /* ===================== 렌더 ===================== */
   return (
     <div className="min-h-screen bg-gradient-to-b from-white to-gray-50 text-gray-900">
-      {/* 상단바 */}
       <header className="sticky top-0 z-10 bg-white/90 backdrop-blur border-b">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -498,7 +462,7 @@ export default function App() {
                 <input
                   className="text-xl md:text-2xl font-semibold bg-transparent border-b border-transparent focus:border-indigo-400 outline-none px-1 rounded"
                   value={title}
-                  onChange={(e) => { setTitle(e.target.value); patchPoll({ title: e.target.value }); }}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setTitle(e.target.value); patchPoll({ title: e.target.value }); }}
                   aria-label="제목"
                 />
               ) : (
@@ -570,7 +534,7 @@ export default function App() {
             visibilityMode, deadlineAt, isVisible: isVisibleStudent,
             voterName, setVoterName, selected, setSelected, submitVote,
             totalVotes, graphData, isClosed,
-            pidReady,
+            pidReady: !!getActivePid(),
           }}
         />
       )}
@@ -582,7 +546,7 @@ export default function App() {
   );
 }
 
-/* ===================== 관리자 화면 ===================== */
+/* ========= Admin ========= */
 function AdminView(props: any) {
   const {
     desc, setDesc,
@@ -776,7 +740,7 @@ function AdminView(props: any) {
             <h2 className="font-semibold">실시간 결과</h2>
             <div className="text-sm text-gray-500">참여 {votedCount} · 총 {totalVotes}표</div>
           </div>
-          <div className="w-full h-[400px]">
+        <div className="w-full h-[400px]">
             {isVisible ? (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={graphData} margin={{ top: 20, right: 20, bottom: 20, left: 0 }}>
@@ -819,7 +783,7 @@ function AdminView(props: any) {
   );
 }
 
-/* ===================== 학생 화면 ===================== */
+/* ========= Student ========= */
 function StudentView(props: any) {
   const {
     desc, options, voteLimit, anonymous,
@@ -875,7 +839,7 @@ function StudentView(props: any) {
                 onClick={() =>
                   setSelected((prev: string[]) => {
                     if (isClosed) return prev;
-                    if (prev.includes(o.id)) return prev.filter((x) => x !== o.id);
+                    if (prev.includes(o.id)) return prev.filter((x: string) => x !== o.id);
                     if (prev.length >= voteLimit) return prev;
                     return [...prev, o.id];
                   })
