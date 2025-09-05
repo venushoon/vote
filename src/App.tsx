@@ -13,6 +13,7 @@ import QRCode from "react-qr-code";
 
 // ===================== 유틸 & 상수 =====================
 const DEFAULT_DESC = "설명을 입력하세요. 예) 체험학습 장소를 골라요!";
+const STORAGE_KEY = "classroom_vote_v3";
 
 function uuid() {
   return (
@@ -22,6 +23,25 @@ function uuid() {
 }
 function getViewMode(): "admin" | "student" {
   return window.location.hash === "#student" ? "student" : "admin";
+}
+
+// 초기 상태 생성 함수
+function makeDefaultState() {
+  return {
+    title: "우리 반 결정 투표",
+    desc: DEFAULT_DESC,
+    voteLimit: 1 as 1 | 2,
+    options: [
+      { id: uuid(), label: "보기 1", votes: 0 },
+      { id: uuid(), label: "보기 2", votes: 0 },
+    ] as Array<{ id: string; label: string; votes: number }>,
+    ballots: {} as Record<string, { ids: string[]; at: number; name?: string }>,
+    anonymous: false,
+    visibilityMode: "always" as "always" | "hidden" | "deadline",
+    deadlineAt: null as number | null,
+    expectedVoters: 0,
+    manualClosed: false,
+  };
 }
 
 // ===================== 메인 앱 =====================
@@ -34,36 +54,24 @@ export default function App() {
   }, []);
 
   // ------- 공통 상태 -------
-  const [title, setTitle] = useState("우리 반 결정 투표");
-  const [desc, setDesc] = useState(DEFAULT_DESC);
-  const [voteLimit, setVoteLimit] = useState<1 | 2>(1);
-  const [options, setOptions] = useState<Array<{ id: string; label: string; votes: number }>>([
-    { id: uuid(), label: "보기 1", votes: 0 },
-    { id: uuid(), label: "보기 2", votes: 0 },
-  ]);
-
-  // key(투표자 식별) -> { ids, at, name? }
-  const [ballots, setBallots] = useState<
-    Record<string, { ids: string[]; at: number; name?: string }>
-  >({});
-
-  // 공개/익명/마감
-  const [anonymous, setAnonymous] = useState(false);
-  const [visibilityMode, setVisibilityMode] =
-    useState<"always" | "hidden" | "deadline">("always");
-  const [deadlineAt, setDeadlineAt] = useState<number | null>(null);
-
-  // 투표 인원 자동 마감
-  const [expectedVoters, setExpectedVoters] = useState<number>(0); // 0=미설정
-  const [manualClosed, setManualClosed] = useState(false);
+  const defaults = useMemo(() => makeDefaultState(), []); // 새 UUID 보장
+  const [title, setTitle] = useState(defaults.title);
+  const [desc, setDesc] = useState(defaults.desc);
+  const [voteLimit, setVoteLimit] = useState<1 | 2>(defaults.voteLimit);
+  const [options, setOptions] = useState(defaults.options);
+  const [ballots, setBallots] = useState(defaults.ballots);
+  const [anonymous, setAnonymous] = useState(defaults.anonymous);
+  const [visibilityMode, setVisibilityMode] = useState(defaults.visibilityMode);
+  const [deadlineAt, setDeadlineAt] = useState<number | null>(defaults.deadlineAt);
+  const [expectedVoters, setExpectedVoters] = useState<number>(defaults.expectedVoters);
+  const [manualClosed, setManualClosed] = useState<boolean>(defaults.manualClosed);
 
   // 학생 입력
   const [voterName, setVoterName] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
 
   const [saveHint, setSaveHint] = useState("");
-
-  const STORAGE_KEY = "classroom_vote_v3";
+  const [linkVersion, setLinkVersion] = useState(0); // ← QR/링크 갱신용
 
   // ------- 로컬 저장/로드 -------
   useEffect(() => {
@@ -86,7 +94,7 @@ export default function App() {
     }
   }, []);
 
-  // 공용 저장 함수(버튼용)
+  // 공용 저장 (버튼/수동 저장 시 사용) + QR 갱신
   function saveToLocalNow() {
     const payload = JSON.stringify(
       {
@@ -105,7 +113,8 @@ export default function App() {
       0
     );
     localStorage.setItem(STORAGE_KEY, payload);
-    setSaveHint("저장됨");
+    setLinkVersion((v) => v + 1); // ← QR/링크 즉시 갱신
+    setSaveHint("저장됨 (QR 업데이트)");
   }
 
   // 자동 저장(변경 시)
@@ -180,16 +189,8 @@ export default function App() {
       Object.entries(prev).forEach(([k, info]) => {
         next[k] = { ...info, ids: info.ids.filter((x) => x !== id) };
       });
-      // 표수 재계산
       setTimeout(recountVotes, 0);
       return next;
-    });
-  }
-  function toggleSelect(id: string) {
-    setSelected((prev) => {
-      if (prev.includes(id)) return prev.filter((x) => x !== id);
-      if (prev.length >= voteLimit) return prev;
-      return [...prev, id];
     });
   }
   function recountVotes() {
@@ -233,14 +234,31 @@ export default function App() {
     setSelected([]);
   }
 
-  // ------- 관리자 제어 -------
-  function clearAll() {
-    if (!confirm("모든 결과를 초기화할까요? (되돌릴 수 없음)")) return;
-    setBallots({});
-    setOptions((prev) => prev.map((o) => ({ ...o, votes: 0 })));
+  // ------- 전체 초기화(완전 리셋) -------
+  function resetAllToDefaults() {
+    if (!confirm("모든 설정과 결과를 기본값으로 초기화할까요?")) return;
+
+    const fresh = makeDefaultState();
+    setTitle(fresh.title);
+    setDesc(fresh.desc);
+    setVoteLimit(fresh.voteLimit);
+    setOptions(fresh.options);
+    setBallots(fresh.ballots);
+    setAnonymous(fresh.anonymous);
+    setVisibilityMode(fresh.visibilityMode);
+    setDeadlineAt(fresh.deadlineAt);
+    setExpectedVoters(fresh.expectedVoters);
+    setManualClosed(fresh.manualClosed);
+    setVoterName("");
     setSelected([]);
-    setManualClosed(false);
+    setSaveHint("기본값으로 초기화됨");
+    localStorage.removeItem(STORAGE_KEY);
+
+    // 학생 QR/링크도 즉시 새로고침되도록
+    setLinkVersion((v) => v + 1);
   }
+
+  // ------- 수동 마감/재개 -------
   function closeNow() {
     setManualClosed(true);
   }
@@ -294,12 +312,15 @@ export default function App() {
     return needs ? `"${out}"` : out;
   }
 
-  // ------- 링크/QR -------
+  // ------- 링크/QR (버전 포함) -------
   const studentLink = useMemo(() => {
     const url = new URL(window.location.href);
+    // 저장/초기화 때마다 쿼리 버전을 갱신하여 QR이 즉시 바뀌도록
+    url.searchParams.set("v", String(linkVersion));
     url.hash = "#student";
     return url.toString();
-  }, []);
+  }, [linkVersion]);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   function loadFromFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -319,6 +340,7 @@ export default function App() {
         if (typeof data.expectedVoters === "number") setExpectedVoters(data.expectedVoters);
         if (typeof data.manualClosed === "boolean") setManualClosed(data.manualClosed);
         setSaveHint("JSON에서 불러왔어요.");
+        setLinkVersion((v) => v + 1); // 불러오기 후에도 QR 갱신
       } catch {
         alert("불러오기에 실패했어요. JSON 형식을 확인하세요.");
       }
@@ -446,7 +468,7 @@ export default function App() {
             addOption,
             setOptionLabel,
             removeOption,
-            clearAll,
+            clearAll: resetAllToDefaults, // ← 전체 초기화 교체
             recountVotes,
             removeVoter: (id: string) => {
               const info = ballots[id];
@@ -472,7 +494,7 @@ export default function App() {
             isClosed,
             closeNow,
             reopen,
-            saveToLocalNow, // ← 저장 버튼에서 사용
+            saveToLocalNow, // ← 수동 저장(QR 갱신)
           }}
         />
       ) : (
@@ -489,7 +511,6 @@ export default function App() {
             setVoterName,
             selected,
             setSelected,
-            toggleSelect,
             submitVote,
             totalVotes,
             graphData,
@@ -670,11 +691,10 @@ function AdminView(props: any) {
               >
                 추가
               </button>
-              {/* 복구: 옵션 저장 버튼 */}
               <button
                 onClick={saveToLocalNow}
                 className="px-3 py-1.5 text-sm rounded-lg bg-white border hover:bg-gray-50"
-                title="현재 옵션/설정을 로컬에 즉시 저장"
+                title="현재 옵션/설정을 로컬에 즉시 저장하고 QR을 갱신합니다"
               >
                 저장
               </button>
@@ -719,7 +739,6 @@ function AdminView(props: any) {
           <div className="flex items-center justify-between">
             <h2 className="font-semibold">학생용 화면 링크</h2>
             <div className="flex items-center gap-2">
-              {/* 복구: 저장 버튼 */}
               <button
                 onClick={saveToLocalNow}
                 className="px-3 py-1.5 text-sm rounded-lg bg-white border hover:bg-gray-50"
@@ -733,7 +752,7 @@ function AdminView(props: any) {
                 복사
               </button>
               <a
-                href="#student"
+                href={studentLink}
                 className="px-3 py-1.5 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700"
               >
                 열기
@@ -742,7 +761,7 @@ function AdminView(props: any) {
           </div>
           <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
             <div className="flex items-center justify-center p-3 bg-gray-50 rounded-xl border">
-              <QRCode value={studentLink} size={160} />
+              <QRCode value={studentLink} size={160} /> {/* ← 링크 버전에 따라 즉시 갱신 */}
             </div>
             <div className="text-sm text-gray-600 break-all leading-relaxed">
               {studentLink}
@@ -869,7 +888,6 @@ function StudentView(props: any) {
     setVoterName,
     selected,
     setSelected,
-    toggleSelect,
     submitVote,
     totalVotes,
     graphData,
