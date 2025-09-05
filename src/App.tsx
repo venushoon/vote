@@ -13,6 +13,7 @@ type Visibility = "always" | "hidden" | "deadline";
 type VoteLimit = 1 | 2;
 type Option = { id: string; label: string; votes: number };
 type Ballot = { ids: string[]; at: number; name?: string | null };
+type GraphDatum = { name: string; votes: number; _i: number };
 
 const DEFAULT_DESC = "설명을 입력하세요. 예) 체험학습 장소를 골라요!";
 const LS_PID_KEY = "vote_last_pid";
@@ -210,7 +211,7 @@ export default function App() {
   const isVisibleAdmin = visibilityMode === "hidden" ? true : baseVisible;
   const isVisibleStudent = baseVisible;
 
-  const graphData = useMemo(
+  const graphData: GraphDatum[] = useMemo(
     () => options.map((o: Option, idx) => ({ name: o.label, votes: o.votes, _i: idx })),
     [options]
   );
@@ -278,7 +279,7 @@ export default function App() {
   const setOptionLabel = (id: string, label: string) => {
     setOptions((prev: Option[]) => {
       const next = prev.map((o: Option) => (o.id === id ? { ...o, label } : o));
-      patchPoll({ options: next });
+      void patchPoll({ options: next });
       return next;
     });
   };
@@ -386,7 +387,7 @@ export default function App() {
         const ids = selected.slice(0, data.voteLimit || 1);
         const nowMs = Date.now();
 
-        // ✅ undefined 대신 null (Firebase RTDB는 undefined 불가)
+        // ✅ undefined 대신 null
         ballotsObj[key] = {
           ids,
           at: nowMs,
@@ -553,7 +554,7 @@ export default function App() {
         setExpectedVotersText(String(evSafe));
         setManualClosed(!!data.manualClosed);
 
-        patchPoll({
+        void patchPoll({
           title: data.title, desc: data.desc, voteLimit: data.voteLimit, options: data.options,
           ballots: data.ballots, anonymous: data.anonymous, visibilityMode: data.visibilityMode,
           deadlineAt: data.deadlineAt ?? null, expectedVoters: evSafe, manualClosed: !!data.manualClosed,
@@ -912,7 +913,7 @@ function AdminView(props: any) {
                     animationDuration={700}
                     animationEasing="ease-out"
                   >
-                    {graphData.map((d) => (
+                    {graphData.map((d: GraphDatum) => (
                       <Cell key={d._i} fill={COLORS[d._i % COLORS.length]} />
                     ))}
                     <LabelList
@@ -1059,7 +1060,7 @@ function StudentView(props: any) {
                   animationDuration={700}
                   animationEasing="ease-out"
                 >
-                  {graphData.map((d) => (
+                  {graphData.map((d: GraphDatum) => (
                     <Cell key={d._i} fill={COLORS[d._i % COLORS.length]} />
                   ))}
                   <LabelList
