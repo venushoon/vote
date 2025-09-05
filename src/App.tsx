@@ -5,7 +5,7 @@ import {
 } from "recharts";
 import QRCode from "react-qr-code";
 
-// Firebase (env는 src/firebase.ts 에서 처리)
+// Firebase
 import { ref, onValue, set, update, runTransaction } from "firebase/database";
 import type { DataSnapshot, TransactionResult } from "firebase/database";
 import { db } from "./firebase";
@@ -56,19 +56,11 @@ export default function App() {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
 
-  // 방 ID (없으면 생성)
+  // 초기 부팅/방 생성/구독 준비 플래그
+  const [isBooting, setIsBooting] = useState(true);
+
+  // 방 ID
   const [pollId, setPollId] = useState<string>("");
-  useEffect(() => {
-    const url = new URL(location.href);
-    let pid = url.searchParams.get("pid") || "";
-    if (!pid) {
-      pid = Math.random().toString(36).slice(2, 8);
-      set(ref(db, pollPath(pid)), defaultState());
-      url.searchParams.set("pid", pid);
-      history.replaceState({}, "", url.toString());
-    }
-    setPollId(pid);
-  }, []);
 
   // 상태
   const [title, setTitle] = useState("우리 반 결정 투표");
@@ -90,26 +82,60 @@ export default function App() {
   // 파일 불러오기 input
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // DB 구독
+  // ===== 안전한 초기화: 방 생성 -> URL 반영 -> 구독 등록 -> 첫 프레임 수신 후 isBooting=false
   useEffect(() => {
-    if (!pollId) return;
-    const r = ref(db, pollPath(pollId));
-    return onValue(r, (snap: DataSnapshot) => {
-      const data = snap.val();
-      if (!data) return;
-      setTitle(data.title ?? "우리 반 결정 투표");
-      setDesc(data.desc ?? DEFAULT_DESC);
-      setVoteLimit((data.voteLimit as VoteLimit) ?? 1);
-      setOptions(Array.isArray(data.options) ? data.options : []);
-      setBallots(data.ballots ?? {});
-      setAnonymous(!!data.anonymous);
-      setVisibilityMode((data.visibilityMode as Visibility) ?? "always");
-      setDeadlineAt(data.deadlineAt ?? null);
-      setExpectedVoters(Number(data.expectedVoters ?? 0));
-      setExpectedVotersText(String(Number(data.expectedVoters ?? 0)));
-      setManualClosed(!!data.manualClosed);
-    });
-  }, [pollId]);
+    let unsub: (() => void) | undefined;
+
+    async function boot() {
+      try {
+        const url = new URL(location.href);
+        let pid = url.searchParams.get("pid") || "";
+
+        if (!pid) {
+          // 새 방 생성
+          pid = Math.random().toString(36).slice(2, 8);
+          const initial = defaultState();
+          await set(ref(db, pollPath(pid)), initial); // DB에 기본값을 먼저 기록
+          url.searchParams.set("pid", pid);
+          history.replaceState({}, "", url.toString());
+        }
+
+        setPollId(pid);
+
+        // 첫 구독
+        const r = ref(db, pollPath(pid));
+        unsub = onValue(r, (snap: DataSnapshot) => {
+          const data = snap.val();
+          if (!data) return;
+          setTitle(data.title ?? "우리 반 결정 투표");
+          setDesc(data.desc ?? DEFAULT_DESC);
+          setVoteLimit((data.voteLimit as VoteLimit) ?? 1);
+          setOptions(Array.isArray(data.options) ? data.options : []);
+          setBallots(data.ballots ?? {});
+          setAnonymous(!!data.anonymous);
+          setVisibilityMode((data.visibilityMode as Visibility) ?? "always");
+          setDeadlineAt(data.deadlineAt ?? null);
+
+          const ev = Number(data.expectedVoters ?? 0);
+          setExpectedVoters(isNaN(ev) ? 0 : ev);
+          setExpectedVotersText(String(isNaN(ev) ? 0 : ev));
+
+          setManualClosed(!!data.manualClosed);
+
+          // 첫 프레임 수신 후 부팅 종료
+          setIsBooting(false);
+        });
+      } catch (e) {
+        console.error("초기화 실패:", e);
+        // 최소한 화면이 뜨도록 로컬 기본값 적용
+        setOptions(defaultState().options);
+        setIsBooting(false);
+      }
+    }
+
+    boot();
+    return () => { if (unsub) unsub(); };
+  }, []);
 
   // 파생값
   const totalVotes = useMemo(() => options.reduce((a, b) => a + (b?.votes ?? 0), 0), [options]);
@@ -125,7 +151,7 @@ export default function App() {
     return now >= deadlineAt;
   }, [visibilityMode, deadlineAt, now]);
 
-  // 요구사항: '항상 숨김'은 학생에서만 숨기고, 관리자는 항상 볼 수 있게
+  // '항상 숨김'은 학생에서만 숨김
   const isVisibleAdmin = visibilityMode === "hidden" ? true : baseVisible;
   const isVisibleStudent = baseVisible;
 
@@ -133,10 +159,9 @@ export default function App() {
 
   // 학생 링크 & QR
   const studentLink = useMemo(() => {
-    if (!pollId) return location.href;
     const url = new URL(location.href);
+    if (pollId) url.searchParams.set("pid", pollId);
     url.hash = "#student";
-    url.searchParams.set("pid", pollId);
     url.searchParams.set("v", String(linkVersion)); // QR 캐시 회피
     return url.toString();
   }, [pollId, linkVersion]);
@@ -144,7 +169,7 @@ export default function App() {
   const copyStudentLink = () =>
     navigator.clipboard.writeText(studentLink).then(() => setSaveHint("학생용 링크를 복사했어요."));
 
-  // 공통 patch
+  // 공통 patch (pollId 없으면 무시)
   function patchPoll(fields: Partial<any>) {
     if (!pollId) return;
     update(ref(db, pollPath(pollId)), { ...fields, updatedAt: Date.now() });
@@ -152,6 +177,7 @@ export default function App() {
 
   // 저장(옵션/설정) -> DB 반영 + QR 갱신
   function saveToCloud() {
+    if (!pollId) return;
     patchPoll({ title, desc, voteLimit, options, anonymous, visibilityMode, deadlineAt, expectedVoters, manualClosed });
     setLinkVersion(v => v + 1);
     setSaveHint("저장됨 (실시간 공유/QR/링크 반영)");
@@ -172,6 +198,7 @@ export default function App() {
     patchPoll({ options: next });
   }
   function removeOption(id: string) {
+    if (!pollId) return;
     const next = options.filter(o => o.id !== id);
     setOptions(next);
     runTransaction(ref(db, pollPath(pollId)), (data: any) => {
@@ -190,6 +217,7 @@ export default function App() {
     });
   }
   function recountVotes() {
+    if (!pollId) return;
     runTransaction(ref(db, pollPath(pollId)), (data: any) => {
       if (!data) return data;
       const opts = data.options || [];
@@ -207,15 +235,18 @@ export default function App() {
   const [selected, setSelected] = useState<string[]>([]);
   function getStudentKey(): string {
     if (anonymous) {
-      const key = localStorage.getItem(`vote_device_token_${pollId}`);
-      if (key) return key;
-      const t = uuid();
-      localStorage.setItem(`vote_device_token_${pollId}`, t);
-      return t;
+      const keyName = `vote_device_token_${pollId || "temp"}`;
+      let key = localStorage.getItem(keyName);
+      if (!key) {
+        key = uuid();
+        localStorage.setItem(keyName, key);
+      }
+      return key;
     }
     return voterName.trim();
   }
   function submitVote() {
+    if (!pollId) return alert("방이 아직 준비되지 않았습니다. 잠시 후 다시 시도하세요.");
     if (isClosed) return alert("투표가 마감되었습니다.");
     const key = getStudentKey();
     if (!key) return alert("이름/번호를 입력하세요.");
@@ -234,7 +265,7 @@ export default function App() {
         if (idx >= 0) opts[idx].votes = (opts[idx].votes || 0) + 1;
       });
       return { ...data, ballots: ballotsObj, options: opts, updatedAt: Date.now() };
-    }).then((res: TransactionResult) => {   // ✅ 제네릭 제거
+    }).then((res: TransactionResult) => {
       if (res.committed) {
         setVoterName("");
         setSelected([]);
@@ -246,6 +277,7 @@ export default function App() {
 
   // 투표자 삭제
   function removeVoter(id: string) {
+    if (!pollId) return;
     if (!confirm(`${id}의 투표를 삭제할까요?`)) return;
     runTransaction(ref(db, pollPath(pollId)), (data: any) => {
       if (!data) return data;
@@ -262,17 +294,19 @@ export default function App() {
     });
   }
 
-  // 전체 초기화(기본값)
+  // 전체 초기화(기본값) — 방 존재 가드 + 기본값 세팅 후 QR 버전 갱신
   function resetAllToDefaults() {
+    if (!pollId) return alert("방이 아직 준비되지 않았습니다.");
     if (!confirm("모든 설정과 결과를 기본값으로 초기화할까요?")) return;
-    set(ref(db, pollPath(pollId)), defaultState());
-    setSaveHint("기본값으로 초기화됨");
-    setLinkVersion(v => v + 1);
+    set(ref(db, pollPath(pollId)), defaultState()).then(() => {
+      setSaveHint("기본값으로 초기화됨");
+      setLinkVersion(v => v + 1);
+    });
   }
 
   // 마감/재개
-  const closeNow = () => patchPoll({ manualClosed: true });
-  const reopen   = () => patchPoll({ manualClosed: false });
+  const closeNow = () => { if (pollId) patchPoll({ manualClosed: true }); };
+  const reopen   = () => { if (pollId) patchPoll({ manualClosed: false }); };
 
   // CSV/JSON 저장
   function download(filename: string, text: string, mime = "application/json") {
@@ -314,7 +348,6 @@ export default function App() {
     reader.onload = (ev) => {
       try {
         const data = JSON.parse(String(ev.target?.result || "{}"));
-        // 상태 갱신
         if (typeof data.title === "string") setTitle(data.title);
         if (typeof data.desc === "string") setDesc(data.desc);
         if (data.voteLimit === 1 || data.voteLimit === 2) setVoteLimit(data.voteLimit);
@@ -323,14 +356,18 @@ export default function App() {
         if (typeof data.anonymous === "boolean") setAnonymous(data.anonymous);
         if (data.visibilityMode) setVisibilityMode(data.visibilityMode);
         setDeadlineAt(data.deadlineAt ?? null);
-        setExpectedVoters(Number(data.expectedVoters ?? 0));
-        setExpectedVotersText(String(Number(data.expectedVoters ?? 0)));
+
+        const evNum = Number(data.expectedVoters ?? 0);
+        setExpectedVoters(isNaN(evNum) ? 0 : evNum);
+        setExpectedVotersText(String(isNaN(evNum) ? 0 : evNum));
+
         setManualClosed(!!data.manualClosed);
+
         // DB 패치
         patchPoll({
           title: data.title, desc: data.desc, voteLimit: data.voteLimit, options: data.options,
           ballots: data.ballots, anonymous: data.anonymous, visibilityMode: data.visibilityMode,
-          deadlineAt: data.deadlineAt ?? null, expectedVoters: Number(data.expectedVoters ?? 0),
+          deadlineAt: data.deadlineAt ?? null, expectedVoters: isNaN(evNum) ? 0 : evNum,
           manualClosed: !!data.manualClosed,
         });
         setLinkVersion(v => v + 1);
@@ -343,14 +380,23 @@ export default function App() {
     e.target.value = ""; // 같은 파일 재선택 허용
   }
 
-  // 투표 인원 입력
+  // 투표 인원 입력(문자유입 안전 처리)
   function onExpectedChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const raw = e.target.value;
+    const raw = e.target.value ?? "";
     setExpectedVotersText(raw);
-    const digits = raw.replace(/\D/g, "");
+    const digits = raw.replace(/\D/g, ""); // 숫자만 추출
     const num = digits === "" ? 0 : parseInt(digits, 10);
     setExpectedVoters(num);
     patchPoll({ expectedVoters: num });
+  }
+
+  // ===== 로딩 가드 =====
+  if (isBooting) {
+    return (
+      <div className="min-h-screen grid place-items-center text-gray-500">
+        초기화 중입니다…
+      </div>
+    );
   }
 
   // ===== 렌더 =====
@@ -549,7 +595,7 @@ function AdminView(props: any) {
           </div>
         </div>
 
-        {/* 보기(옵션) — ✅ 저장 버튼은 여기만 남김 */}
+        {/* 보기(옵션) — 저장 버튼은 여기만 유지 */}
         <div className="bg-white rounded-2xl shadow p-4">
           <div className="flex items-center justify-between">
             <h2 className="font-semibold">보기(옵션)</h2>
@@ -573,7 +619,7 @@ function AdminView(props: any) {
           </div>
         </div>
 
-        {/* 학생 링크 & QR — ❌ 저장 버튼 제거 */}
+        {/* 학생 링크 & QR — 저장 버튼 제거 */}
         <div className="bg-white rounded-2xl shadow p-4">
           <div className="flex items-center justify-between">
             <h2 className="font-semibold">학생용 화면 링크</h2>
