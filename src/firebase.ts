@@ -1,4 +1,4 @@
-// src/firebase.ts
+/// <reference types="vite/client" />
 import { initializeApp, getApps } from "firebase/app";
 import { getDatabase } from "firebase/database";
 
