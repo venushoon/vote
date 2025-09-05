@@ -1,4 +1,3 @@
-// src/App.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -128,7 +127,7 @@ export default function App() {
 
     async function boot() {
       try {
-        await ensureAuth(); // ← 읽기도 Rules에 의해 보호될 수 있으므로 먼저 인증
+        await ensureAuth();
         let pid = getPidFromURL() || localStorage.getItem(LS_PID_KEY) || "";
         if (!pid) {
           pid = Math.random().toString(36).slice(2, 8);
@@ -137,28 +136,32 @@ export default function App() {
         setPidEverywhere(pid);
 
         const r = ref(db, pollPath(pid));
-        unsub = onValue(r, (snap: DataSnapshot) => {
-          const data = snap.val();
-          if (!data) return;
-          setTitle(data.title ?? "우리 반 결정 투표");
-          setDesc(data.desc ?? DEFAULT_DESC);
-          setVoteLimit((data.voteLimit as VoteLimit) ?? 1);
-          setOptions(Array.isArray(data.options) ? data.options : []);
-          setBallots(data.ballots ?? {});
-          setAnonymous(!!data.anonymous);
-          setVisibilityMode((data.visibilityMode as Visibility) ?? "always");
-          setDeadlineAt(data.deadlineAt ?? null);
-          const ev = Number(data.expectedVoters ?? 0);
-          const evSafe = isNaN(ev) ? 0 : ev;
-          setExpectedVoters(evSafe);
-          setExpectedVotersText(String(evSafe));
-          setManualClosed(!!data.manualClosed);
-          setPidEverywhere(pid);
-          setIsBooting(false);
-        }, (err) => {
-          console.error("구독 실패:", err);
-          setIsBooting(false);
-        });
+        unsub = onValue(
+          r,
+          (snap: DataSnapshot) => {
+            const data = snap.val();
+            if (!data) return;
+            setTitle(data.title ?? "우리 반 결정 투표");
+            setDesc(data.desc ?? DEFAULT_DESC);
+            setVoteLimit((data.voteLimit as VoteLimit) ?? 1);
+            setOptions(Array.isArray(data.options) ? data.options : []);
+            setBallots(data.ballots ?? {});
+            setAnonymous(!!data.anonymous);
+            setVisibilityMode((data.visibilityMode as Visibility) ?? "always");
+            setDeadlineAt(data.deadlineAt ?? null);
+            const ev = Number(data.expectedVoters ?? 0);
+            const evSafe = isNaN(ev) ? 0 : ev;
+            setExpectedVoters(evSafe);
+            setExpectedVotersText(String(evSafe));
+            setManualClosed(!!data.manualClosed);
+            setPidEverywhere(pid);
+            setIsBooting(false);
+          },
+          (err) => {
+            console.error("구독 실패:", err);
+            setIsBooting(false);
+          }
+        );
       } catch (e) {
         console.error("초기화 실패", e);
         setOptions(defaultState().options);
@@ -172,7 +175,7 @@ export default function App() {
 
   /* ---------- 파생값 ---------- */
   const totalVotes = useMemo(
-    () => options.reduce((a, b) => a + (b?.votes ?? 0), 0),
+    () => options.reduce((a: number, b: Option) => a + (b?.votes ?? 0), 0),
     [options]
   );
   const votedCount = useMemo(() => Object.keys(ballots).length, [ballots]);
@@ -232,20 +235,42 @@ export default function App() {
     }
   };
 
+  /** ✅ ‘추가’는 트랜잭션으로 안전 저장 */
+  const addOption = async () => {
+    try {
+      setIsWorking(true);
+      await ensureAuth();
+      const pid = await ensurePid();
+      const newItem: Option = { id: uuid(), label: `보기 ${options.length + 1}`, votes: 0 };
+
+      const res = await runTransaction(ref(db, pollPath(pid)), (data: any) => {
+        const d = data || defaultState();
+        const current: Option[] = Array.isArray(d.options) ? d.options : [];
+        const next: Option[] = [...current, newItem];
+        return { ...d, options: next, updatedAt: Date.now() };
+      });
+
+      if ((res as any)?.committed) {
+        // 로컬도 즉시 동기감 유지
+        setOptions((prev: Option[]) => [...prev, newItem]);
+        setSaveHint("옵션을 추가했어요.");
+        setLinkVersion((v) => v + 1);
+      }
+    } catch (e) {
+      console.error(e);
+      alert("옵션 추가 중 문제가 발생했습니다.");
+    } finally {
+      setIsWorking(false);
+    }
+  };
+
   const setOptionLabel = (id: string, label: string) => {
     setOptions((prev: Option[]) => {
       const next = prev.map((o: Option) => (o.id === id ? { ...o, label } : o));
-      // label 변경은 즉시 패치(실시간 반영)
+      // label 변경은 바로 패치
       patchPoll({ options: next });
       return next;
     });
-  };
-
-  const addOption = async () => {
-    const label = `보기 ${options.length + 1}`;
-    const next: Option[] = [...options, { id: uuid(), label, votes: 0 }];
-    setOptions(next);
-    await saveToCloud();
   };
 
   const removeOption = async (id: string) => {
@@ -253,28 +278,32 @@ export default function App() {
       setIsWorking(true);
       await ensureAuth();
       const pid = await ensurePid();
-      const next: Option[] = options.filter((o: Option) => o.id !== id);
-      setOptions(next); // 낙관적 업데이트
 
       await runTransaction(ref(db, pollPath(pid)), (data: any) => {
         if (!data) return data;
+        const current: Option[] = Array.isArray(data.options) ? data.options : [];
+        const next: Option[] = current.filter((o: Option) => o.id !== id);
+
         const ballotsObj = data.ballots || {};
         const newBallots: Record<string, Ballot> = {};
-        Object.entries(ballotsObj).forEach(([k, info]: any) => {
-          const ids = (info.ids || []).filter((x: string) => x !== id);
-          newBallots[k] = { ...info, ids };
+        Object.entries(ballotsObj).forEach(([k, info]) => {
+          const b = info as Ballot;
+          newBallots[k] = { ...b, ids: (b.ids || []).filter((x) => x !== id) };
         });
 
         const countMap: Record<string, number> = {};
         next.forEach((o: Option) => (countMap[o.id] = 0));
-        Object.values(newBallots).forEach((b: any) =>
-          (b.ids || []).forEach((oid: string) => (countMap[oid] = (countMap[oid] || 0) + 1))
+        Object.values(newBallots).forEach((b) =>
+          b.ids.forEach((oid) => (countMap[oid] = (countMap[oid] || 0) + 1))
         );
 
         const fixedOptions: Option[] = next.map((o: Option) => ({ ...o, votes: countMap[o.id] || 0 }));
         return { ...data, options: fixedOptions, ballots: newBallots, updatedAt: Date.now() };
       });
+
+      setOptions((prev) => prev.filter((o) => o.id !== id));
       setSaveHint("옵션을 삭제했어요.");
+      setLinkVersion((v) => v + 1);
     } catch (e) {
       console.error(e);
       alert("옵션 삭제 중 문제가 발생했습니다.");
@@ -387,7 +416,7 @@ export default function App() {
       await runTransaction(ref(db, pollPath(pid)), (data: any) => {
         if (!data) return data;
         const ballotsObj = { ...(data.ballots || {}) };
-        const info = ballotsObj[id];
+        const info = ballotsObj[id] as Ballot | undefined;
         if (!info) return data;
         delete ballotsObj[id];
 
@@ -592,14 +621,20 @@ export default function App() {
       {viewMode === "admin" ? (
         <AdminView
           {...{
-            desc, setDesc: async (v: string) => { setDesc(v); await patchPoll({ desc: v }); },
-            voteLimit, setVoteLimit: async (v: VoteLimit) => { setVoteLimit(v); await patchPoll({ voteLimit: v }); },
+            desc,
+            setDesc: async (v: string) => { setDesc(v); await patchPoll({ desc: v }); },
+            voteLimit,
+            setVoteLimit: async (v: VoteLimit) => { setVoteLimit(v); await patchPoll({ voteLimit: v }); },
             options, setOptionLabel, addOption, removeOption, recountVotes,
-            ballots, anonymous, setAnonymous: async (b: boolean) => { setAnonymous(b); await patchPoll({ anonymous: b }); },
-            visibilityMode, setVisibilityMode: async (m: Visibility) => { setVisibilityMode(m); await patchPoll({ visibilityMode: m }); },
-            deadlineAt, setDeadlineAt: async (t: number | null) => { setDeadlineAt(t); await patchPoll({ deadlineAt: t }); },
+            ballots,
+            anonymous, setAnonymous: async (b: boolean) => { setAnonymous(b); await patchPoll({ anonymous: b }); },
+            visibilityMode,
+            setVisibilityMode: async (m: Visibility) => { setVisibilityMode(m); await patchPoll({ visibilityMode: m }); },
+            deadlineAt,
+            setDeadlineAt: async (t: number | null) => { setDeadlineAt(t); await patchPoll({ deadlineAt: t }); },
             totalVotes, graphData, isVisible: isVisibleAdmin,
-            expectedVotersText, onExpectedChange: async (e: React.ChangeEvent<HTMLInputElement>) => {
+            expectedVotersText,
+            onExpectedChange: async (e: React.ChangeEvent<HTMLInputElement>) => {
               const raw = e.target.value ?? "";
               setExpectedVotersText(raw);
               const num = raw.replace(/\D/g, "");
@@ -818,7 +853,7 @@ function AdminView(props: any) {
                     <div className="text-xs text-gray-500">{new Date(info.at).toLocaleString()}</div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <div className="text-xs text-gray-500">{info.ids?.join(", ")}</div>
+                    <div className="text-xs text-gray-500">{(info.ids || []).join(", ")}</div>
                     <button onClick={() => removeVoter(id)} className="px-2 py-1 text-xs rounded-md bg-white border hover:bg-gray-50" disabled={isWorking}>삭제</button>
                   </div>
                 </li>
