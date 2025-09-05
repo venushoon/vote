@@ -4,6 +4,16 @@ on:
   push:
     branches: [ main ]
 
+# Pages에 올리려면 이 권한이 필요
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -16,12 +26,11 @@ jobs:
         with:
           node-version: 20
 
-      # package-lock.json이 저장소에 있어야 npm ci 성공
       - name: Install deps
         run: npm ci
 
-      # Secrets → .env 파일 생성
-      - name: Create .env
+      # Secrets -> .env 파일 생성 (레포 Settings > Secrets and variables > Actions에 미리 등록)
+      - name: Create .env from secrets
         run: |
           cat > .env <<EOF
           VITE_FB_API_KEY=${{ secrets.VITE_FB_API_KEY }}
@@ -36,8 +45,19 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Deploy
-        uses: peaceiris/actions-gh-pages@v3
+      # dist를 Pages 아티팩트로 업로드
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./dist
+          path: ./dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
