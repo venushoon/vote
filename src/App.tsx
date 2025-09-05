@@ -1,3 +1,4 @@
+// src/App.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -7,7 +8,7 @@ import QRCode from "react-qr-code";
 
 import { ref, onValue, set, update, runTransaction } from "firebase/database";
 import type { DataSnapshot } from "firebase/database";
-import { db } from "./firebase";
+import { db, ensureAuth } from "./firebase";
 
 /* ========= Types & utils ========= */
 type Visibility = "always" | "hidden" | "deadline";
@@ -65,7 +66,6 @@ export default function App() {
   const [isBooting, setIsBooting] = useState(true);
   const [isWorking, setIsWorking] = useState(false); // 버튼 연타 방지
 
-  // 서버 동기화 상태
   const [pollId, setPollId] = useState<string>("");
 
   const [title, setTitle] = useState("우리 반 결정 투표");
@@ -98,26 +98,28 @@ export default function App() {
     history.replaceState({}, "", u.toString());
   };
 
-  /** pid가 없으면 생성해서 DB/URL/LS/State에 모두 반영 */
+  /** 인증 보장 + pid 없으면 생성(기본 상태로 set) */
   const ensurePid = async (): Promise<string> => {
+    await ensureAuth();
     let pid = getActivePid();
     if (pid) return pid;
+    setIsWorking(true);
     try {
-      setIsWorking(true);
       pid = Math.random().toString(36).slice(2, 8);
       await set(ref(db, pollPath(pid)), defaultState());
       setPidEverywhere(pid);
-      setLinkVersion(v => v + 1); // QR 갱신
+      setLinkVersion((v) => v + 1);
       return pid;
     } finally {
       setIsWorking(false);
     }
   };
 
-  const patchPoll = (fields: Partial<any>) => {
+  const patchPoll = async (fields: Partial<any>) => {
+    await ensureAuth();
     const pid = getActivePid();
     if (!pid) return;
-    update(ref(db, pollPath(pid)), { ...fields, updatedAt: Date.now() });
+    await update(ref(db, pollPath(pid)), { ...fields, updatedAt: Date.now() });
   };
 
   /* ---------- 초기 부팅/구독 ---------- */
@@ -126,6 +128,7 @@ export default function App() {
 
     async function boot() {
       try {
+        await ensureAuth(); // ← 읽기도 Rules에 의해 보호될 수 있으므로 먼저 인증
         let pid = getPidFromURL() || localStorage.getItem(LS_PID_KEY) || "";
         if (!pid) {
           pid = Math.random().toString(36).slice(2, 8);
@@ -145,14 +148,15 @@ export default function App() {
           setAnonymous(!!data.anonymous);
           setVisibilityMode((data.visibilityMode as Visibility) ?? "always");
           setDeadlineAt(data.deadlineAt ?? null);
-
           const ev = Number(data.expectedVoters ?? 0);
           const evSafe = isNaN(ev) ? 0 : ev;
           setExpectedVoters(evSafe);
           setExpectedVotersText(String(evSafe));
           setManualClosed(!!data.manualClosed);
-
           setPidEverywhere(pid);
+          setIsBooting(false);
+        }, (err) => {
+          console.error("구독 실패:", err);
           setIsBooting(false);
         });
       } catch (e) {
@@ -186,7 +190,6 @@ export default function App() {
     return now >= deadlineAt;
   }, [visibilityMode, deadlineAt, now]);
 
-  // '항상 숨김'은 학생만 숨김
   const isVisibleAdmin = visibilityMode === "hidden" ? true : baseVisible;
   const isVisibleStudent = baseVisible;
 
@@ -201,7 +204,7 @@ export default function App() {
     const u = new URL(location.href);
     if (pid) u.searchParams.set("pid", pid);
     u.hash = "#student";
-    u.searchParams.set("v", String(linkVersion)); // QR 캐시 무효화
+    u.searchParams.set("v", String(linkVersion));
     return u.toString();
   }, [pollId, linkVersion]);
 
@@ -212,13 +215,14 @@ export default function App() {
   const saveToCloud = async () => {
     try {
       setIsWorking(true);
+      await ensureAuth();
       const pid = await ensurePid();
       await update(ref(db, pollPath(pid)), {
         title, desc, voteLimit, options, anonymous,
         visibilityMode, deadlineAt, expectedVoters, manualClosed,
         updatedAt: Date.now(),
       });
-      setLinkVersion(v => v + 1);
+      setLinkVersion((v) => v + 1);
       setSaveHint("저장됨 (QR/링크 반영)");
     } catch (e) {
       console.error(e);
@@ -231,6 +235,7 @@ export default function App() {
   const setOptionLabel = (id: string, label: string) => {
     setOptions((prev: Option[]) => {
       const next = prev.map((o: Option) => (o.id === id ? { ...o, label } : o));
+      // label 변경은 즉시 패치(실시간 반영)
       patchPoll({ options: next });
       return next;
     });
@@ -240,15 +245,16 @@ export default function App() {
     const label = `보기 ${options.length + 1}`;
     const next: Option[] = [...options, { id: uuid(), label, votes: 0 }];
     setOptions(next);
-    await saveToCloud(); // 한 번에 옵션/설정 동기 저장
+    await saveToCloud();
   };
 
   const removeOption = async (id: string) => {
     try {
       setIsWorking(true);
+      await ensureAuth();
       const pid = await ensurePid();
       const next: Option[] = options.filter((o: Option) => o.id !== id);
-      setOptions(next); // 낙관적 반영
+      setOptions(next); // 낙관적 업데이트
 
       await runTransaction(ref(db, pollPath(pid)), (data: any) => {
         if (!data) return data;
@@ -280,6 +286,7 @@ export default function App() {
   const recountVotes = async () => {
     try {
       setIsWorking(true);
+      await ensureAuth();
       const pid = await ensurePid();
       await runTransaction(ref(db, pollPath(pid)), (data: any) => {
         if (!data) return data;
@@ -322,8 +329,12 @@ export default function App() {
   const submitVote = async () => {
     try {
       setIsWorking(true);
+      await ensureAuth();
       const pid = await ensurePid();
-      if (isClosed) { alert("투표가 마감되었습니다."); return; }
+      if (manualClosed || (expectedVoters > 0 && Object.keys(ballots).length >= expectedVoters)) {
+        alert("투표가 마감되었습니다.");
+        return;
+      }
 
       const key = getStudentKey(pid, anonymous);
       if (!key) { alert("이름/번호를 입력하세요."); return; }
@@ -370,6 +381,7 @@ export default function App() {
     try {
       if (!confirm(`${id}의 투표를 삭제할까요?`)) return;
       setIsWorking(true);
+      await ensureAuth();
       const pid = await ensurePid();
 
       await runTransaction(ref(db, pollPath(pid)), (data: any) => {
@@ -400,10 +412,10 @@ export default function App() {
     try {
       if (!confirm("모든 설정과 결과를 기본값으로 초기화할까요?")) return;
       setIsWorking(true);
+      await ensureAuth();
       const pid = await ensurePid();
       await set(ref(db, pollPath(pid)), defaultState());
 
-      // 로컬 상태도 즉시 기본값으로
       const d = defaultState();
       setTitle(d.title);
       setDesc(d.desc);
@@ -418,7 +430,7 @@ export default function App() {
       setManualClosed(d.manualClosed);
 
       setPidEverywhere(pid);
-      setLinkVersion(v => v + 1);
+      setLinkVersion((v) => v + 1);
       setSaveHint("기본값으로 초기화됨");
     } catch (e) {
       console.error(e);
@@ -430,15 +442,17 @@ export default function App() {
 
   /* ---------- 마감/재개 ---------- */
   const closeNow = async () => {
+    await ensureAuth();
     const pid = await ensurePid();
     await update(ref(db, pollPath(pid)), { manualClosed: true, updatedAt: Date.now() });
   };
   const reopen = async () => {
+    await ensureAuth();
     const pid = await ensurePid();
     await update(ref(db, pollPath(pid)), { manualClosed: false, updatedAt: Date.now() });
   };
 
-  /* ---------- JSON/CSV 저장 & 불러오기 ---------- */
+  /* ---------- JSON/CSV & 불러오기 ---------- */
   const download = (filename: string, text: string, mime = "application/json") => {
     const blob = new Blob([text], { type: `${mime};charset=utf-8` });
     const url = URL.createObjectURL(blob);
@@ -504,7 +518,7 @@ export default function App() {
           ballots: data.ballots, anonymous: data.anonymous, visibilityMode: data.visibilityMode,
           deadlineAt: data.deadlineAt ?? null, expectedVoters: evSafe, manualClosed: !!data.manualClosed,
         });
-        setLinkVersion(v => v + 1);
+        setLinkVersion((v) => v + 1);
         setSaveHint("JSON에서 불러왔어요.");
       } catch {
         alert("불러오기에 실패했어요. JSON 형식을 확인하세요.");
@@ -514,14 +528,12 @@ export default function App() {
     e.target.value = "";
   };
 
-  /* ---------- 로딩 ---------- */
   if (isBooting) {
     return <div className="min-h-screen grid place-items-center text-gray-500">초기화 중입니다…</div>;
   }
 
   const pidReady = !!getActivePid();
 
-  /* ---------- 렌더 ---------- */
   return (
     <div className="min-h-screen bg-gradient-to-b from-white to-gray-50 text-gray-900">
       {/* 상단바 */}
@@ -534,7 +546,11 @@ export default function App() {
                 <input
                   className="text-xl md:text-2xl font-semibold bg-transparent border-b border-transparent focus:border-indigo-400 outline-none px-1 rounded"
                   value={title}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setTitle(e.target.value); patchPoll({ title: e.target.value }); }}
+                  onChange={async (e: React.ChangeEvent<HTMLInputElement>) => {
+                    const v = e.target.value;
+                    setTitle(v);
+                    await patchPoll({ title: v });
+                  }}
                   aria-label="제목"
                 />
               ) : (
@@ -576,20 +592,20 @@ export default function App() {
       {viewMode === "admin" ? (
         <AdminView
           {...{
-            desc, setDesc: (v: string) => { setDesc(v); patchPoll({ desc: v }); },
-            voteLimit, setVoteLimit: (v: VoteLimit) => { setVoteLimit(v); patchPoll({ voteLimit: v }); },
+            desc, setDesc: async (v: string) => { setDesc(v); await patchPoll({ desc: v }); },
+            voteLimit, setVoteLimit: async (v: VoteLimit) => { setVoteLimit(v); await patchPoll({ voteLimit: v }); },
             options, setOptionLabel, addOption, removeOption, recountVotes,
-            ballots, anonymous, setAnonymous: (b: boolean) => { setAnonymous(b); patchPoll({ anonymous: b }); },
-            visibilityMode, setVisibilityMode: (m: Visibility) => { setVisibilityMode(m); patchPoll({ visibilityMode: m }); },
-            deadlineAt, setDeadlineAt: (t: number | null) => { setDeadlineAt(t); patchPoll({ deadlineAt: t }); },
+            ballots, anonymous, setAnonymous: async (b: boolean) => { setAnonymous(b); await patchPoll({ anonymous: b }); },
+            visibilityMode, setVisibilityMode: async (m: Visibility) => { setVisibilityMode(m); await patchPoll({ visibilityMode: m }); },
+            deadlineAt, setDeadlineAt: async (t: number | null) => { setDeadlineAt(t); await patchPoll({ deadlineAt: t }); },
             totalVotes, graphData, isVisible: isVisibleAdmin,
-            expectedVotersText, onExpectedChange: (e: React.ChangeEvent<HTMLInputElement>) => {
+            expectedVotersText, onExpectedChange: async (e: React.ChangeEvent<HTMLInputElement>) => {
               const raw = e.target.value ?? "";
               setExpectedVotersText(raw);
               const num = raw.replace(/\D/g, "");
               const safe = num === "" ? 0 : parseInt(num, 10);
               setExpectedVoters(safe);
-              patchPoll({ expectedVoters: safe });
+              await patchPoll({ expectedVoters: safe });
             },
             isClosed, closeNow, reopen,
             saveHint, saveToCloud,
@@ -607,7 +623,7 @@ export default function App() {
             visibilityMode, deadlineAt, isVisible: isVisibleStudent,
             voterName, setVoterName, selected, setSelected, submitVote,
             totalVotes, graphData, isClosed,
-            pidReady,
+            pidReady: !!getActivePid(),
             isWorking,
           }}
         />
@@ -842,11 +858,6 @@ function AdminView(props: any) {
               <div className="h-full grid place-items-center text-gray-400">결과 비공개 상태입니다.</div>
             )}
           </div>
-          {isClosed && (
-            <div className="mt-3 p-3 rounded-xl bg-rose-50 text-rose-700 text-sm border border-rose-100">
-              투표가 마감되었습니다. 재개하려면 "재개" 버튼을 누르세요.
-            </div>
-          )}
         </div>
 
         <div className="bg-indigo-50 rounded-2xl border border-indigo-100 p-4">
