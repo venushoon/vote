@@ -1,4 +1,3 @@
-// --- App.tsx (TypeScript 'any' 오류 제거 / pid 안정화 버전) ---
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -64,7 +63,9 @@ export default function App() {
   }, []);
 
   const [isBooting, setIsBooting] = useState(true);
+  const [isWorking, setIsWorking] = useState(false); // 버튼 연타 방지
 
+  // 서버 동기화 상태
   const [pollId, setPollId] = useState<string>("");
 
   const [title, setTitle] = useState("우리 반 결정 투표");
@@ -84,6 +85,7 @@ export default function App() {
   const [showLink, setShowLink] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  /* ---------- pid 보조 ---------- */
   const getActivePid = (): string =>
     pollId || getPidFromURL() || localStorage.getItem(LS_PID_KEY) || "";
 
@@ -96,6 +98,29 @@ export default function App() {
     history.replaceState({}, "", u.toString());
   };
 
+  /** pid가 없으면 생성해서 DB/URL/LS/State에 모두 반영 */
+  const ensurePid = async (): Promise<string> => {
+    let pid = getActivePid();
+    if (pid) return pid;
+    try {
+      setIsWorking(true);
+      pid = Math.random().toString(36).slice(2, 8);
+      await set(ref(db, pollPath(pid)), defaultState());
+      setPidEverywhere(pid);
+      setLinkVersion(v => v + 1); // QR 갱신
+      return pid;
+    } finally {
+      setIsWorking(false);
+    }
+  };
+
+  const patchPoll = (fields: Partial<any>) => {
+    const pid = getActivePid();
+    if (!pid) return;
+    update(ref(db, pollPath(pid)), { ...fields, updatedAt: Date.now() });
+  };
+
+  /* ---------- 초기 부팅/구독 ---------- */
   useEffect(() => {
     let unsub: (() => void) | undefined;
 
@@ -141,6 +166,7 @@ export default function App() {
     return () => { if (unsub) unsub(); };
   }, []);
 
+  /* ---------- 파생값 ---------- */
   const totalVotes = useMemo(
     () => options.reduce((a, b) => a + (b?.votes ?? 0), 0),
     [options]
@@ -160,6 +186,7 @@ export default function App() {
     return now >= deadlineAt;
   }, [visibilityMode, deadlineAt, now]);
 
+  // '항상 숨김'은 학생만 숨김
   const isVisibleAdmin = visibilityMode === "hidden" ? true : baseVisible;
   const isVisibleStudent = baseVisible;
 
@@ -168,36 +195,37 @@ export default function App() {
     [options]
   );
 
+  /* ---------- 학생 링크/QR ---------- */
   const studentLink = useMemo(() => {
     const pid = getActivePid();
     const u = new URL(location.href);
     if (pid) u.searchParams.set("pid", pid);
     u.hash = "#student";
-    u.searchParams.set("v", String(linkVersion));
+    u.searchParams.set("v", String(linkVersion)); // QR 캐시 무효화
     return u.toString();
   }, [pollId, linkVersion]);
 
   const copyStudentLink = () =>
     navigator.clipboard.writeText(studentLink).then(() => setSaveHint("학생용 링크를 복사했어요."));
 
-  const patchPoll = (fields: Partial<any>) => {
-    const pid = getActivePid();
-    if (!pid) return;
-    update(ref(db, pollPath(pid)), { ...fields, updatedAt: Date.now() });
-  };
-
-  const saveToCloud = () => {
-    const pid = getActivePid();
-    if (!pid) {
-      alert("방이 아직 준비되지 않았습니다. 잠시 후 다시 시도하세요.");
-      return;
+  /* ---------- 옵션/저장/삭제/재계산 ---------- */
+  const saveToCloud = async () => {
+    try {
+      setIsWorking(true);
+      const pid = await ensurePid();
+      await update(ref(db, pollPath(pid)), {
+        title, desc, voteLimit, options, anonymous,
+        visibilityMode, deadlineAt, expectedVoters, manualClosed,
+        updatedAt: Date.now(),
+      });
+      setLinkVersion(v => v + 1);
+      setSaveHint("저장됨 (QR/링크 반영)");
+    } catch (e) {
+      console.error(e);
+      alert("저장 중 문제가 발생했습니다.");
+    } finally {
+      setIsWorking(false);
     }
-    patchPoll({
-      title, desc, voteLimit, options, anonymous,
-      visibilityMode, deadlineAt, expectedVoters, manualClosed,
-    });
-    setLinkVersion((v) => v + 1);
-    setSaveHint("저장됨 (QR/링크 반영)");
   };
 
   const setOptionLabel = (id: string, label: string) => {
@@ -208,56 +236,73 @@ export default function App() {
     });
   };
 
-  const addOption = () => {
+  const addOption = async () => {
     const label = `보기 ${options.length + 1}`;
     const next: Option[] = [...options, { id: uuid(), label, votes: 0 }];
     setOptions(next);
-    patchPoll({ options: next });
+    await saveToCloud(); // 한 번에 옵션/설정 동기 저장
   };
 
-  const removeOption = (id: string) => {
-    const pid = getActivePid();
-    if (!pid) return;
-    const next: Option[] = options.filter((o: Option) => o.id !== id);
-    setOptions(next);
+  const removeOption = async (id: string) => {
+    try {
+      setIsWorking(true);
+      const pid = await ensurePid();
+      const next: Option[] = options.filter((o: Option) => o.id !== id);
+      setOptions(next); // 낙관적 반영
 
-    runTransaction(ref(db, pollPath(pid)), (data: any) => {
-      if (!data) return data;
-      const ballotsObj = data.ballots || {};
-      const newBallots: Record<string, Ballot> = {};
-      Object.entries(ballotsObj).forEach(([k, info]: any) => {
-        const ids = (info.ids || []).filter((x: string) => x !== id);
-        newBallots[k] = { ...info, ids };
+      await runTransaction(ref(db, pollPath(pid)), (data: any) => {
+        if (!data) return data;
+        const ballotsObj = data.ballots || {};
+        const newBallots: Record<string, Ballot> = {};
+        Object.entries(ballotsObj).forEach(([k, info]: any) => {
+          const ids = (info.ids || []).filter((x: string) => x !== id);
+          newBallots[k] = { ...info, ids };
+        });
+
+        const countMap: Record<string, number> = {};
+        next.forEach((o: Option) => (countMap[o.id] = 0));
+        Object.values(newBallots).forEach((b: any) =>
+          (b.ids || []).forEach((oid: string) => (countMap[oid] = (countMap[oid] || 0) + 1))
+        );
+
+        const fixedOptions: Option[] = next.map((o: Option) => ({ ...o, votes: countMap[o.id] || 0 }));
+        return { ...data, options: fixedOptions, ballots: newBallots, updatedAt: Date.now() };
       });
-
-      const countMap: Record<string, number> = {};
-      next.forEach((o: Option) => (countMap[o.id] = 0));
-      Object.values(newBallots).forEach((b: any) =>
-        (b.ids || []).forEach((oid: string) => (countMap[oid] = (countMap[oid] || 0) + 1))
-      );
-
-      const fixedOptions: Option[] = next.map((o: Option) => ({ ...o, votes: countMap[o.id] || 0 }));
-      return { ...data, options: fixedOptions, ballots: newBallots, updatedAt: Date.now() };
-    });
+      setSaveHint("옵션을 삭제했어요.");
+    } catch (e) {
+      console.error(e);
+      alert("옵션 삭제 중 문제가 발생했습니다.");
+    } finally {
+      setIsWorking(false);
+    }
   };
 
-  const recountVotes = () => {
-    const pid = getActivePid();
-    if (!pid) return;
-    runTransaction(ref(db, pollPath(pid)), (data: any) => {
-      if (!data) return data;
-      const opts: Option[] = data.options || [];
-      const ballotsObj = data.ballots || {};
-      const countMap: Record<string, number> = {};
-      opts.forEach((o: Option) => (countMap[o.id] = 0));
-      Object.values(ballotsObj).forEach((b: any) =>
-        (b.ids || []).forEach((oid: string) => (countMap[oid] = (countMap[oid] || 0) + 1))
-      );
-      const fixed: Option[] = opts.map((o: Option) => ({ ...o, votes: countMap[o.id] || 0 }));
-      return { ...data, options: fixed, updatedAt: Date.now() };
-    });
+  const recountVotes = async () => {
+    try {
+      setIsWorking(true);
+      const pid = await ensurePid();
+      await runTransaction(ref(db, pollPath(pid)), (data: any) => {
+        if (!data) return data;
+        const opts: Option[] = data.options || [];
+        const ballotsObj = data.ballots || {};
+        const countMap: Record<string, number> = {};
+        opts.forEach((o: Option) => (countMap[o.id] = 0));
+        Object.values(ballotsObj).forEach((b: any) =>
+          (b.ids || []).forEach((oid: string) => (countMap[oid] = (countMap[oid] || 0) + 1))
+        );
+        const fixed: Option[] = opts.map((o: Option) => ({ ...o, votes: countMap[o.id] || 0 }));
+        return { ...data, options: fixed, updatedAt: Date.now() };
+      });
+      setSaveHint("표를 재계산했어요.");
+    } catch (e) {
+      console.error(e);
+      alert("재계산 중 오류가 발생했습니다.");
+    } finally {
+      setIsWorking(false);
+    }
   };
 
+  /* ---------- 투표 제출 ---------- */
   const [voterName, setVoterName] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
 
@@ -274,75 +319,91 @@ export default function App() {
     return voterName.trim();
   };
 
-  const submitVote = () => {
-    const pid = getActivePid();
-    if (!pid) return alert("방이 아직 준비되지 않았습니다. 잠시 후 다시 시도하세요.");
-    if (isClosed) return alert("투표가 마감되었습니다.");
+  const submitVote = async () => {
+    try {
+      setIsWorking(true);
+      const pid = await ensurePid();
+      if (isClosed) { alert("투표가 마감되었습니다."); return; }
 
-    const key = getStudentKey(pid, anonymous);
-    if (!key) return alert("이름/번호를 입력하세요.");
-    if (selected.length === 0) return alert("선택한 보기가 없습니다.");
+      const key = getStudentKey(pid, anonymous);
+      if (!key) { alert("이름/번호를 입력하세요."); return; }
+      if (selected.length === 0) { alert("선택한 보기가 없습니다."); return; }
 
-    runTransaction(ref(db, pollPath(pid)), (data: any) => {
-      if (!data) return data;
-      const ballotsObj = data.ballots || {};
-      if (ballotsObj[key]) return data;
+      const res = await runTransaction(ref(db, pollPath(pid)), (data: any) => {
+        if (!data) return data;
+        const ballotsObj = data.ballots || {};
+        if (ballotsObj[key]) return data;
 
-      const ids = selected.slice(0, data.voteLimit || 1);
-      const nowMs = Date.now();
-      ballotsObj[key] = {
-        ids,
-        at: nowMs,
-        name: data.anonymous ? undefined : voterName.trim() || undefined,
-      };
+        const ids = selected.slice(0, data.voteLimit || 1);
+        const nowMs = Date.now();
+        ballotsObj[key] = {
+          ids,
+          at: nowMs,
+          name: data.anonymous ? undefined : voterName.trim() || undefined,
+        };
 
-      const opts: Option[] = (data.options || []).map((o: Option) => ({ ...o }));
-      ids.forEach((id: string) => {
-        const idx = opts.findIndex((o: Option) => o.id === id);
-        if (idx >= 0) opts[idx].votes = (opts[idx].votes || 0) + 1;
+        const opts: Option[] = (data.options || []).map((o: Option) => ({ ...o }));
+        ids.forEach((oid: string) => {
+          const idx = opts.findIndex((o: Option) => o.id === oid);
+          if (idx >= 0) opts[idx].votes = (opts[idx].votes || 0) + 1;
+        });
+
+        return { ...data, ballots: ballotsObj, options: opts, updatedAt: Date.now() };
       });
 
-      return { ...data, ballots: ballotsObj, options: opts, updatedAt: Date.now() };
-    }).then((res: any) => {
-      if (res?.committed) {
+      if ((res as any)?.committed) {
         setVoterName("");
         setSelected([]);
       } else {
         alert("이미 투표했습니다.");
       }
-    });
+    } catch (e) {
+      console.error(e);
+      alert("제출 중 오류가 발생했습니다.");
+    } finally {
+      setIsWorking(false);
+    }
   };
 
-  const removeVoter = (id: string) => {
-    const pid = getActivePid();
-    if (!pid) return;
-    if (!confirm(`${id}의 투표를 삭제할까요?`)) return;
+  /* ---------- 투표자 삭제 ---------- */
+  const removeVoter = async (id: string) => {
+    try {
+      if (!confirm(`${id}의 투표를 삭제할까요?`)) return;
+      setIsWorking(true);
+      const pid = await ensurePid();
 
-    runTransaction(ref(db, pollPath(pid)), (data: any) => {
-      if (!data) return data;
-      const ballotsObj = { ...(data.ballots || {}) };
-      const info = ballotsObj[id];
-      if (!info) return data;
-      delete ballotsObj[id];
+      await runTransaction(ref(db, pollPath(pid)), (data: any) => {
+        if (!data) return data;
+        const ballotsObj = { ...(data.ballots || {}) };
+        const info = ballotsObj[id];
+        if (!info) return data;
+        delete ballotsObj[id];
 
-      const opts: Option[] = (data.options || []).map((o: Option) => ({ ...o }));
-      (info.ids || []).forEach((oid: string) => {
-        const idx = opts.findIndex((o: Option) => o.id === oid);
-        if (idx >= 0) opts[idx].votes = Math.max(0, (opts[idx].votes || 0) - 1);
+        const opts: Option[] = (data.options || []).map((o: Option) => ({ ...o }));
+        (info.ids || []).forEach((oid: string) => {
+          const idx = opts.findIndex((o: Option) => o.id === oid);
+          if (idx >= 0) opts[idx].votes = Math.max(0, (opts[idx].votes || 0) - 1);
+        });
+
+        return { ...data, ballots: ballotsObj, options: opts, updatedAt: Date.now() };
       });
-
-      return { ...data, ballots: ballotsObj, options: opts, updatedAt: Date.now() };
-    });
+    } catch (e) {
+      console.error(e);
+      alert("투표 삭제 중 오류가 발생했습니다.");
+    } finally {
+      setIsWorking(false);
+    }
   };
 
-  const resetAllToDefaults = () => {
-    const pid = getActivePid();
-    if (!pid) return alert("방이 아직 준비되지 않았습니다.");
-    if (!confirm("모든 설정과 결과를 기본값으로 초기화할까요?")) return;
+  /* ---------- 전체 초기화(같은 pid 유지) ---------- */
+  const resetAllToDefaults = async () => {
+    try {
+      if (!confirm("모든 설정과 결과를 기본값으로 초기화할까요?")) return;
+      setIsWorking(true);
+      const pid = await ensurePid();
+      await set(ref(db, pollPath(pid)), defaultState());
 
-    set(ref(db, pollPath(pid)), defaultState()).then(() => {
-      setSaveHint("기본값으로 초기화됨");
-      setLinkVersion((v) => v + 1);
+      // 로컬 상태도 즉시 기본값으로
       const d = defaultState();
       setTitle(d.title);
       setDesc(d.desc);
@@ -355,26 +416,34 @@ export default function App() {
       setExpectedVoters(d.expectedVoters);
       setExpectedVotersText(String(d.expectedVoters));
       setManualClosed(d.manualClosed);
+
       setPidEverywhere(pid);
-    });
+      setLinkVersion(v => v + 1);
+      setSaveHint("기본값으로 초기화됨");
+    } catch (e) {
+      console.error(e);
+      alert("초기화 중 오류가 발생했습니다.");
+    } finally {
+      setIsWorking(false);
+    }
   };
 
-  const closeNow = () => {
-    const pid = getActivePid();
-    if (pid) update(ref(db, pollPath(pid)), { manualClosed: true, updatedAt: Date.now() });
+  /* ---------- 마감/재개 ---------- */
+  const closeNow = async () => {
+    const pid = await ensurePid();
+    await update(ref(db, pollPath(pid)), { manualClosed: true, updatedAt: Date.now() });
   };
-  const reopen = () => {
-    const pid = getActivePid();
-    if (pid) update(ref(db, pollPath(pid)), { manualClosed: false, updatedAt: Date.now() });
+  const reopen = async () => {
+    const pid = await ensurePid();
+    await update(ref(db, pollPath(pid)), { manualClosed: false, updatedAt: Date.now() });
   };
 
+  /* ---------- JSON/CSV 저장 & 불러오기 ---------- */
   const download = (filename: string, text: string, mime = "application/json") => {
     const blob = new Blob([text], { type: `${mime};charset=utf-8` });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
+    a.href = url; a.download = filename; a.click();
     URL.revokeObjectURL(url);
   };
 
@@ -435,7 +504,7 @@ export default function App() {
           ballots: data.ballots, anonymous: data.anonymous, visibilityMode: data.visibilityMode,
           deadlineAt: data.deadlineAt ?? null, expectedVoters: evSafe, manualClosed: !!data.manualClosed,
         });
-        setLinkVersion((v) => v + 1);
+        setLinkVersion(v => v + 1);
         setSaveHint("JSON에서 불러왔어요.");
       } catch {
         alert("불러오기에 실패했어요. JSON 형식을 확인하세요.");
@@ -445,14 +514,17 @@ export default function App() {
     e.target.value = "";
   };
 
+  /* ---------- 로딩 ---------- */
   if (isBooting) {
     return <div className="min-h-screen grid place-items-center text-gray-500">초기화 중입니다…</div>;
   }
 
   const pidReady = !!getActivePid();
 
+  /* ---------- 렌더 ---------- */
   return (
     <div className="min-h-screen bg-gradient-to-b from-white to-gray-50 text-gray-900">
+      {/* 상단바 */}
       <header className="sticky top-0 z-10 bg-white/90 backdrop-blur border-b">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -474,9 +546,9 @@ export default function App() {
 
           {viewMode === "admin" ? (
             <div className="flex items-center gap-2">
-              <button onClick={saveJSON} className="px-3 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 shadow">JSON 저장</button>
-              <button onClick={saveCSV} className="px-3 py-2 rounded-xl bg-white border hover:bg-gray-50 shadow">CSV 저장</button>
-              <button onClick={() => fileInputRef.current?.click()} className="px-3 py-2 rounded-xl bg-white border hover:bg-gray-50 shadow">불러오기</button>
+              <button onClick={saveJSON} className="px-3 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 shadow" disabled={isWorking}>JSON 저장</button>
+              <button onClick={saveCSV} className="px-3 py-2 rounded-xl bg-white border hover:bg-gray-50 shadow" disabled={isWorking}>CSV 저장</button>
+              <button onClick={() => fileInputRef.current?.click()} className="px-3 py-2 rounded-xl bg-white border hover:bg-gray-50 shadow" disabled={isWorking}>불러오기</button>
               <input ref={fileInputRef} type="file" accept="application/json" className="hidden" onChange={loadFromFile} />
             </div>
           ) : (
@@ -525,6 +597,7 @@ export default function App() {
             showLink, setShowLink,
             resetAllToDefaults,
             removeVoter,
+            isWorking,
           }}
         />
       ) : (
@@ -534,7 +607,8 @@ export default function App() {
             visibilityMode, deadlineAt, isVisible: isVisibleStudent,
             voterName, setVoterName, selected, setSelected, submitVote,
             totalVotes, graphData, isClosed,
-            pidReady: !!getActivePid(),
+            pidReady,
+            isWorking,
           }}
         />
       )}
@@ -562,6 +636,7 @@ function AdminView(props: any) {
     showLink, setShowLink,
     resetAllToDefaults,
     removeVoter,
+    isWorking,
   } = props;
 
   const votedCount = Object.keys(ballots || {}).length;
@@ -591,6 +666,7 @@ function AdminView(props: any) {
                   value={voteLimit}
                   onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setVoteLimit(Number(e.target.value) as VoteLimit)}
                   className="border rounded-lg px-2 py-1"
+                  disabled={isWorking}
                 >
                   <option value={1}>1인 1표</option>
                   <option value={2}>1인 2표</option>
@@ -599,7 +675,7 @@ function AdminView(props: any) {
 
               <div className="flex items-center gap-2">
                 <label className="text-sm text-gray-500">익명 모드</label>
-                <input type="checkbox" className="scale-110" checked={anonymous} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setAnonymous(e.target.checked)} />
+                <input type="checkbox" className="scale-110" checked={anonymous} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setAnonymous(e.target.checked)} disabled={isWorking} />
               </div>
 
               <div className="flex items-center gap-2">
@@ -608,6 +684,7 @@ function AdminView(props: any) {
                   value={visibilityMode}
                   onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setVisibilityMode(e.target.value as Visibility)}
                   className="border rounded-lg px-2 py-1"
+                  disabled={isWorking}
                 >
                   <option value="always">항상 공개</option>
                   <option value="hidden">항상 숨김(학생만)</option>
@@ -619,6 +696,7 @@ function AdminView(props: any) {
                     className="border rounded-lg px-2 py-1"
                     value={deadlineAt ? new Date(deadlineAt).toISOString().slice(0, 16) : ""}
                     onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDeadlineAt(e.target.value ? new Date(e.target.value).getTime() : null)}
+                    disabled={isWorking}
                   />
                 )}
               </div>
@@ -634,14 +712,15 @@ function AdminView(props: any) {
                   value={expectedVotersText}
                   onChange={onExpectedChange}
                   placeholder="예: 25"
+                  disabled={isWorking}
                 />
                 <span className="text-xs text-gray-500">빈 칸 가능 · 0=자동마감 없음</span>
               </div>
               <div className="flex items-center gap-2">
                 {!isClosed ? (
-                  <button onClick={closeNow} className="px-2 py-1 text-xs rounded-md bg-rose-600 text-white hover:bg-rose-700 shadow">마감</button>
+                  <button onClick={closeNow} className="px-2 py-1 text-xs rounded-md bg-rose-600 text-white hover:bg-rose-700 shadow" disabled={isWorking}>마감</button>
                 ) : (
-                  <button onClick={reopen} className="px-2 py-1 text-xs rounded-md bg-emerald-600 text-white hover:bg-emerald-700 shadow">재개</button>
+                  <button onClick={reopen} className="px-2 py-1 text-xs rounded-md bg-emerald-600 text-white hover:bg-emerald-700 shadow" disabled={isWorking}>재개</button>
                 )}
               </div>
             </div>
@@ -658,22 +737,22 @@ function AdminView(props: any) {
           <div className="flex items-center justify-between">
             <h2 className="font-semibold">보기(옵션)</h2>
             <div className="flex items-center gap-2">
-              <button onClick={addOption} className="px-3 py-1.5 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">추가</button>
-              <button onClick={saveToCloud} className="px-3 py-1.5 text-sm rounded-lg bg-white border hover:bg-gray-50" title="현재 옵션/설정을 DB에 저장하고 QR/링크를 갱신합니다">저장</button>
+              <button onClick={addOption} className="px-3 py-1.5 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700" disabled={isWorking}>추가</button>
+              <button onClick={saveToCloud} className="px-3 py-1.5 text-sm rounded-lg bg-white border hover:bg-gray-50" disabled={isWorking} title="현재 옵션/설정을 DB에 저장하고 QR/링크를 갱신합니다">저장</button>
             </div>
           </div>
           <ul className="mt-3 space-y-2">
             {options.map((o: Option) => (
               <li key={o.id} className="flex items-center gap-2">
-                <input className="flex-1 border rounded-lg px-2 py-1" value={o.label} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setOptionLabel(o.id, e.target.value)} />
+                <input className="flex-1 border rounded-lg px-2 py-1" value={o.label} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setOptionLabel(o.id, e.target.value)} disabled={isWorking} />
                 <span className="text-xs text-gray-500 w-14 text-right">{o.votes} 표</span>
-                <button onClick={() => removeOption(o.id)} className="px-2 py-1 text-xs rounded-md bg-white border hover:bg-gray-50">삭제</button>
+                <button onClick={() => removeOption(o.id)} className="px-2 py-1 text-xs rounded-md bg-white border hover:bg-gray-50" disabled={isWorking}>삭제</button>
               </li>
             ))}
           </ul>
           <div className="mt-3 flex items-center justify-between text-sm text-gray-500">
-            <button onClick={resetAllToDefaults} className="px-3 py-1.5 rounded-lg bg-white border hover:bg-gray-50">전체 초기화</button>
-            <button onClick={recountVotes} className="px-3 py-1.5 rounded-lg bg-white border hover:bg-gray-50">표 재계산</button>
+            <button onClick={resetAllToDefaults} className="px-3 py-1.5 rounded-lg bg-white border hover:bg-gray-50" disabled={isWorking}>전체 초기화</button>
+            <button onClick={recountVotes} className="px-3 py-1.5 rounded-lg bg-white border hover:bg-gray-50" disabled={isWorking}>표 재계산</button>
           </div>
         </div>
 
@@ -724,7 +803,7 @@ function AdminView(props: any) {
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="text-xs text-gray-500">{info.ids?.join(", ")}</div>
-                    <button onClick={() => removeVoter(id)} className="px-2 py-1 text-xs rounded-md bg-white border hover:bg-gray-50">삭제</button>
+                    <button onClick={() => removeVoter(id)} className="px-2 py-1 text-xs rounded-md bg-white border hover:bg-gray-50" disabled={isWorking}>삭제</button>
                   </div>
                 </li>
               ))}
@@ -740,7 +819,7 @@ function AdminView(props: any) {
             <h2 className="font-semibold">실시간 결과</h2>
             <div className="text-sm text-gray-500">참여 {votedCount} · 총 {totalVotes}표</div>
           </div>
-        <div className="w-full h-[400px]">
+          <div className="w-full h-[400px]">
             {isVisible ? (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={graphData} margin={{ top: 20, right: 20, bottom: 20, left: 0 }}>
@@ -790,7 +869,7 @@ function StudentView(props: any) {
     visibilityMode, deadlineAt, isVisible,
     voterName, setVoterName, selected, setSelected,
     submitVote, totalVotes, graphData, isClosed,
-    pidReady,
+    pidReady, isWorking,
   } = props;
 
   const [submitted, setSubmitted] = useState(false);
@@ -824,7 +903,7 @@ function StudentView(props: any) {
               onChange={(e: React.ChangeEvent<HTMLInputElement>) => setVoterName(e.target.value)}
               placeholder="이름 또는 번호"
               className="mt-1 w-full border rounded-lg px-3 py-2"
-              disabled={isClosed}
+              disabled={isClosed || isWorking}
             />
           </div>
         )}
@@ -832,13 +911,13 @@ function StudentView(props: any) {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {options.map((o: Option) => {
             const checked = selected.includes(o.id);
-            const disabled = isClosed || (!checked && selected.length >= voteLimit);
+            const disabled = isClosed || isWorking || (!checked && selected.length >= voteLimit);
             return (
               <button
                 key={o.id}
                 onClick={() =>
                   setSelected((prev: string[]) => {
-                    if (isClosed) return prev;
+                    if (isClosed || isWorking) return prev;
                     if (prev.includes(o.id)) return prev.filter((x: string) => x !== o.id);
                     if (prev.length >= voteLimit) return prev;
                     return [...prev, o.id];
@@ -859,7 +938,7 @@ function StudentView(props: any) {
           <button
             onClick={onSubmit}
             className="px-4 py-2 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
-            disabled={isClosed || !pidReady}
+            disabled={isClosed || !pidReady || isWorking}
             title={!pidReady ? "방이 준비되는 중입니다…" : undefined}
           >
             제출
