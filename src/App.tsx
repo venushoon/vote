@@ -82,7 +82,7 @@ export default function App() {
   // 파일 불러오기 input
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // ===== 안전한 초기화: 방 생성 -> URL 반영 -> 구독 등록 -> 첫 프레임 수신 후 isBooting=false
+  // ===== 안전한 초기화 =====
   useEffect(() => {
     let unsub: (() => void) | undefined;
 
@@ -92,17 +92,15 @@ export default function App() {
         let pid = url.searchParams.get("pid") || "";
 
         if (!pid) {
-          // 새 방 생성
           pid = Math.random().toString(36).slice(2, 8);
           const initial = defaultState();
-          await set(ref(db, pollPath(pid)), initial); // DB에 기본값을 먼저 기록
+          await set(ref(db, pollPath(pid)), initial);
           url.searchParams.set("pid", pid);
           history.replaceState({}, "", url.toString());
         }
 
         setPollId(pid);
 
-        // 첫 구독
         const r = ref(db, pollPath(pid));
         unsub = onValue(r, (snap: DataSnapshot) => {
           const data = snap.val();
@@ -122,12 +120,10 @@ export default function App() {
 
           setManualClosed(!!data.manualClosed);
 
-          // 첫 프레임 수신 후 부팅 종료
           setIsBooting(false);
         });
       } catch (e) {
         console.error("초기화 실패:", e);
-        // 최소한 화면이 뜨도록 로컬 기본값 적용
         setOptions(defaultState().options);
         setIsBooting(false);
       }
@@ -162,20 +158,20 @@ export default function App() {
     const url = new URL(location.href);
     if (pollId) url.searchParams.set("pid", pollId);
     url.hash = "#student";
-    url.searchParams.set("v", String(linkVersion)); // QR 캐시 회피
+    url.searchParams.set("v", String(linkVersion));
     return url.toString();
   }, [pollId, linkVersion]);
 
   const copyStudentLink = () =>
     navigator.clipboard.writeText(studentLink).then(() => setSaveHint("학생용 링크를 복사했어요."));
 
-  // 공통 patch (pollId 없으면 무시)
+  // 공통 patch
   function patchPoll(fields: Partial<any>) {
     if (!pollId) return;
     update(ref(db, pollPath(pollId)), { ...fields, updatedAt: Date.now() });
   }
 
-  // 저장(옵션/설정) -> DB 반영 + QR 갱신
+  // 저장
   function saveToCloud() {
     if (!pollId) return;
     patchPoll({ title, desc, voteLimit, options, anonymous, visibilityMode, deadlineAt, expectedVoters, manualClosed });
@@ -236,12 +232,12 @@ export default function App() {
   function getStudentKey(): string {
     if (anonymous) {
       const keyName = `vote_device_token_${pollId || "temp"}`;
-      let key = localStorage.getItem(keyName);
+      let key = localStorage.getItem(keyName); // string | null
       if (!key) {
         key = uuid();
         localStorage.setItem(keyName, key);
       }
-      return key;
+      return key as string; // ✅ 항상 string으로 반환
     }
     return voterName.trim();
   }
@@ -294,7 +290,7 @@ export default function App() {
     });
   }
 
-  // 전체 초기화(기본값) — 방 존재 가드 + 기본값 세팅 후 QR 버전 갱신
+  // 전체 초기화
   function resetAllToDefaults() {
     if (!pollId) return alert("방이 아직 준비되지 않았습니다.");
     if (!confirm("모든 설정과 결과를 기본값으로 초기화할까요?")) return;
@@ -340,7 +336,7 @@ export default function App() {
     return needs ? `"${out}"` : out;
   }
 
-  // JSON 불러오기 (파일 → 상태/DB)
+  // JSON 불러오기
   function loadFromFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -363,7 +359,6 @@ export default function App() {
 
         setManualClosed(!!data.manualClosed);
 
-        // DB 패치
         patchPoll({
           title: data.title, desc: data.desc, voteLimit: data.voteLimit, options: data.options,
           ballots: data.ballots, anonymous: data.anonymous, visibilityMode: data.visibilityMode,
@@ -377,20 +372,20 @@ export default function App() {
       }
     };
     reader.readAsText(file, "utf-8");
-    e.target.value = ""; // 같은 파일 재선택 허용
+    e.target.value = "";
   }
 
-  // 투표 인원 입력(문자유입 안전 처리)
+  // 투표 인원 입력
   function onExpectedChange(e: React.ChangeEvent<HTMLInputElement>) {
     const raw = e.target.value ?? "";
     setExpectedVotersText(raw);
-    const digits = raw.replace(/\D/g, ""); // 숫자만 추출
+    const digits = raw.replace(/\D/g, "");
     const num = digits === "" ? 0 : parseInt(digits, 10);
     setExpectedVoters(num);
     patchPoll({ expectedVoters: num });
   }
 
-  // ===== 로딩 가드 =====
+  // 로딩 가드
   if (isBooting) {
     return (
       <div className="min-h-screen grid place-items-center text-gray-500">
