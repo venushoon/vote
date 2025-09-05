@@ -35,7 +35,7 @@ export default function App() {
 
   // ------- 공통 상태 -------
   const [title, setTitle] = useState("우리 반 결정 투표");
-  const [desc, setDesc] = useState(DEFAULT_DESC); // 기본 안내 문구
+  const [desc, setDesc] = useState(DEFAULT_DESC);
   const [voteLimit, setVoteLimit] = useState<1 | 2>(1);
   const [options, setOptions] = useState<Array<{ id: string; label: string; votes: number }>>([
     { id: uuid(), label: "보기 1", votes: 0 },
@@ -86,6 +86,29 @@ export default function App() {
     }
   }, []);
 
+  // 공용 저장 함수(버튼용)
+  function saveToLocalNow() {
+    const payload = JSON.stringify(
+      {
+        title,
+        desc,
+        voteLimit,
+        options,
+        ballots,
+        anonymous,
+        visibilityMode,
+        deadlineAt,
+        expectedVoters,
+        manualClosed,
+      },
+      null,
+      0
+    );
+    localStorage.setItem(STORAGE_KEY, payload);
+    setSaveHint("저장됨");
+  }
+
+  // 자동 저장(변경 시)
   useEffect(() => {
     const payload = JSON.stringify(
       {
@@ -225,7 +248,7 @@ export default function App() {
     setManualClosed(false);
   }
 
-  // ------- 저장/불러오기 -------
+  // ------- 저장(다운로드)/불러오기 -------
   function download(filename: string, text: string, mime = "application/json") {
     const blob = new Blob([text], { type: `${mime};charset=utf-8` });
     const url = URL.createObjectURL(blob);
@@ -449,6 +472,7 @@ export default function App() {
             isClosed,
             closeNow,
             reopen,
+            saveToLocalNow, // ← 저장 버튼에서 사용
           }}
         />
       ) : (
@@ -513,6 +537,7 @@ function AdminView(props: any) {
     isClosed,
     closeNow,
     reopen,
+    saveToLocalNow,
   } = props;
 
   const votedCount = Object.keys(ballots).length;
@@ -528,7 +553,6 @@ function AdminView(props: any) {
             value={desc}
             onChange={(e) => setDesc(e.target.value)}
             onFocus={() => {
-              // 포커스 시 기본 문구면 비워 줌
               if (desc === DEFAULT_DESC) setDesc("");
             }}
             className="w-full mt-2 p-3 border rounded-xl outline-none focus:ring-2 focus:ring-indigo-300"
@@ -635,16 +659,26 @@ function AdminView(props: any) {
           </div>
         </div>
 
-        {/* 보기(옵션) — 위로 이동 완료 */}
+        {/* 보기(옵션) */}
         <div className="bg-white rounded-2xl shadow p-4">
           <div className="flex items-center justify-between">
             <h2 className="font-semibold">보기(옵션)</h2>
-            <button
-              onClick={addOption}
-              className="px-3 py-1.5 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700"
-            >
-              추가
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={addOption}
+                className="px-3 py-1.5 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700"
+              >
+                추가
+              </button>
+              {/* 복구: 옵션 저장 버튼 */}
+              <button
+                onClick={saveToLocalNow}
+                className="px-3 py-1.5 text-sm rounded-lg bg-white border hover:bg-gray-50"
+                title="현재 옵션/설정을 로컬에 즉시 저장"
+              >
+                저장
+              </button>
+            </div>
           </div>
           <ul className="mt-3 space-y-2">
             {options.map((o: any) => (
@@ -680,22 +714,29 @@ function AdminView(props: any) {
           </div>
         </div>
 
-        {/* 학생용 링크 & QR — 아래로 이동 완료 */}
+        {/* 학생용 링크 & QR */}
         <div className="bg-white rounded-2xl shadow p-4">
           <div className="flex items-center justify-between">
             <h2 className="font-semibold">학생용 화면 링크</h2>
             <div className="flex items-center gap-2">
+              {/* 복구: 저장 버튼 */}
+              <button
+                onClick={saveToLocalNow}
+                className="px-3 py-1.5 text-sm rounded-lg bg-white border hover:bg-gray-50"
+              >
+                저장
+              </button>
               <button
                 onClick={copyStudentLink}
                 className="px-3 py-1.5 text-sm rounded-lg bg-white border hover:bg-gray-50"
               >
-                링크 복사
+                복사
               </button>
               <a
                 href="#student"
                 className="px-3 py-1.5 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700"
               >
-                바로 열기
+                열기
               </a>
             </div>
           </div>
@@ -706,7 +747,7 @@ function AdminView(props: any) {
             <div className="text-sm text-gray-600 break-all leading-relaxed">
               {studentLink}
               <p className="mt-2 text-xs text-gray-500">
-                QR을 화면에 띄우거나 링크를 메시지/알림장으로 공유하세요.
+                저장 후 생성된 QR/링크를 공유하면 동일한 설정으로 학생 화면을 열 수 있어요.
               </p>
             </div>
           </div>
@@ -737,7 +778,7 @@ function AdminView(props: any) {
                         .join(", ")}
                     </div>
                     <button
-                      onClick={() => removeVoter(id)}
+                      onClick={() => props.removeVoter(id)}
                       className="px-2 py-1 text-xs rounded-md bg-white border hover:bg-gray-50"
                     >
                       삭제
@@ -764,11 +805,25 @@ function AdminView(props: any) {
             {isVisible ? (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={graphData} margin={{ top: 20, right: 20, bottom: 20, left: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" />
+                  <defs>
+                    <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#6366F1" stopOpacity="1" />
+                      <stop offset="100%" stopColor="#A78BFA" stopOpacity="0.9" />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.4} />
                   <XAxis dataKey="name" interval={0} angle={-10} textAnchor="end" height={50} />
                   <YAxis allowDecimals={false} />
                   <Tooltip formatter={(v: any) => `${v} 표`} />
-                  <Bar dataKey="votes">
+                  <Bar
+                    dataKey="votes"
+                    fill="url(#barGrad)"
+                    radius={[10, 10, 0, 0]}
+                    barSize={36}
+                    isAnimationActive
+                    animationDuration={700}
+                    animationEasing="ease-out"
+                  >
                     <LabelList dataKey="votes" position="top" />
                   </Bar>
                 </BarChart>
@@ -911,11 +966,25 @@ function StudentView(props: any) {
           {isVisible ? (
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={graphData} margin={{ top: 20, right: 20, bottom: 20, left: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" />
+                <defs>
+                  <linearGradient id="barGradS" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#6366F1" stopOpacity="1" />
+                    <stop offset="100%" stopColor="#A78BFA" stopOpacity="0.9" />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" opacity={0.4} />
                 <XAxis dataKey="name" interval={0} angle={-10} textAnchor="end" height={50} />
                 <YAxis allowDecimals={false} />
                 <Tooltip formatter={(v: any) => `${v} 표`} />
-                <Bar dataKey="votes">
+                <Bar
+                  dataKey="votes"
+                  fill="url(#barGradS)"
+                  radius={[10, 10, 0, 0]}
+                  barSize={32}
+                  isAnimationActive
+                  animationDuration={700}
+                  animationEasing="ease-out"
+                >
                   <LabelList dataKey="votes" position="top" />
                 </Bar>
               </BarChart>
