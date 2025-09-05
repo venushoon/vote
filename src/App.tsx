@@ -63,7 +63,7 @@ export default function App() {
   }, []);
 
   const [isBooting, setIsBooting] = useState(true);
-  const [isWorking, setIsWorking] = useState(false); // 버튼 연타 방지
+  const [isWorking, setIsWorking] = useState(false);
 
   const [pollId, setPollId] = useState<string>("");
 
@@ -235,27 +235,28 @@ export default function App() {
     }
   };
 
-  /** ✅ ‘추가’는 트랜잭션으로 안전 저장 */
+  /** ✅ ‘추가’는 트랜잭션으로만 저장(낙관적 업데이트 제거) */
   const addOption = async () => {
     try {
       setIsWorking(true);
       await ensureAuth();
       const pid = await ensurePid();
-      const newItem: Option = { id: uuid(), label: `보기 ${options.length + 1}`, votes: 0 };
 
-      const res = await runTransaction(ref(db, pollPath(pid)), (data: any) => {
+      await runTransaction(ref(db, pollPath(pid)), (data: any) => {
         const d = data || defaultState();
         const current: Option[] = Array.isArray(d.options) ? d.options : [];
+
+        // 서버 스냅샷 기준으로 라벨 번호 계산
+        const nextIndex = current.length + 1;
+        const newItem: Option = { id: uuid(), label: `보기 ${nextIndex}`, votes: 0 };
+
         const next: Option[] = [...current, newItem];
         return { ...d, options: next, updatedAt: Date.now() };
       });
 
-      if ((res as any)?.committed) {
-        // 로컬도 즉시 동기감 유지
-        setOptions((prev: Option[]) => [...prev, newItem]);
-        setSaveHint("옵션을 추가했어요.");
-        setLinkVersion((v) => v + 1);
-      }
+      // 로컬 setOptions 추가 X : onValue 구독이 최신 상태를 내려줍니다.
+      setSaveHint("옵션을 추가했어요.");
+      setLinkVersion((v) => v + 1);
     } catch (e) {
       console.error(e);
       alert("옵션 추가 중 문제가 발생했습니다.");
@@ -267,7 +268,6 @@ export default function App() {
   const setOptionLabel = (id: string, label: string) => {
     setOptions((prev: Option[]) => {
       const next = prev.map((o: Option) => (o.id === id ? { ...o, label } : o));
-      // label 변경은 바로 패치
       patchPoll({ options: next });
       return next;
     });
@@ -301,7 +301,6 @@ export default function App() {
         return { ...data, options: fixedOptions, ballots: newBallots, updatedAt: Date.now() };
       });
 
-      setOptions((prev) => prev.filter((o) => o.id !== id));
       setSaveHint("옵션을 삭제했어요.");
       setLinkVersion((v) => v + 1);
     } catch (e) {
