@@ -11,14 +11,16 @@ import {
 } from "recharts";
 import QRCode from "react-qr-code";
 
-// ===================== 유틸 =====================
+// ===================== 유틸 & 상수 =====================
+const DEFAULT_DESC = "설명을 입력하세요. 예) 체험학습 장소를 골라요!";
+
 function uuid() {
   return (
     (window.crypto as any)?.randomUUID?.() ||
     `id-${Math.random().toString(36).slice(2)}-${Date.now()}`
   );
 }
-function getViewMode() {
+function getViewMode(): "admin" | "student" {
   return window.location.hash === "#student" ? "student" : "admin";
 }
 
@@ -33,7 +35,7 @@ export default function App() {
 
   // ------- 공통 상태 -------
   const [title, setTitle] = useState("우리 반 결정 투표");
-  const [desc, setDesc] = useState("설명을 입력하세요. 예) 체험학습 장소를 골라요!");
+  const [desc, setDesc] = useState(DEFAULT_DESC); // 기본 안내 문구
   const [voteLimit, setVoteLimit] = useState<1 | 2>(1);
   const [options, setOptions] = useState<Array<{ id: string; label: string; votes: number }>>([
     { id: uuid(), label: "보기 1", votes: 0 },
@@ -71,7 +73,7 @@ export default function App() {
       const data = JSON.parse(raw);
       if (data.title) setTitle(data.title);
       if (data.desc) setDesc(data.desc);
-      if (data.voteLimit) setVoteLimit(data.voteLimit);
+      if (data.voteLimit) setVoteLimit(data.voteLimit as 1 | 2);
       if (Array.isArray(data.options)) setOptions(data.options);
       if (data.ballots) setBallots(data.ballots);
       if (typeof data.anonymous === "boolean") setAnonymous(data.anonymous);
@@ -179,14 +181,13 @@ export default function App() {
   }
 
   // ------- 투표 제출 -------
-  function getStudentKey() {
+  function getStudentKey(): string {
     if (anonymous) {
-      let token = localStorage.getItem("vote_device_token");
-      if (!token) {
-        token = uuid();
-        localStorage.setItem("vote_device_token", token);
-      }
-      return token;
+      const existing = localStorage.getItem("vote_device_token");
+      if (existing) return existing;
+      const newToken = uuid();
+      localStorage.setItem("vote_device_token", newToken);
+      return newToken;
     }
     return voterName.trim();
   }
@@ -286,7 +287,7 @@ export default function App() {
         const data = JSON.parse(String(ev.target?.result || "{}"));
         if (data.title) setTitle(data.title);
         if (data.desc) setDesc(data.desc);
-        if (data.voteLimit) setVoteLimit(data.voteLimit);
+        if (data.voteLimit) setVoteLimit(data.voteLimit as 1 | 2);
         if (Array.isArray(data.options)) setOptions(data.options);
         if (data.ballots) setBallots(data.ballots);
         if (typeof data.anonymous === "boolean") setAnonymous(data.anonymous);
@@ -526,9 +527,13 @@ function AdminView(props: any) {
           <textarea
             value={desc}
             onChange={(e) => setDesc(e.target.value)}
+            onFocus={() => {
+              // 포커스 시 기본 문구면 비워 줌
+              if (desc === DEFAULT_DESC) setDesc("");
+            }}
             className="w-full mt-2 p-3 border rounded-xl outline-none focus:ring-2 focus:ring-indigo-300"
             rows={3}
-            placeholder="투표 목적/안내를 적어주세요."
+            placeholder={DEFAULT_DESC}
           />
 
           <div className="mt-4 grid grid-cols-1 gap-3">
@@ -537,7 +542,7 @@ function AdminView(props: any) {
                 <span className="text-sm text-gray-500">투표 방식</span>
                 <select
                   value={voteLimit}
-                  onChange={(e) => setVoteLimit(Number(e.target.value))}
+                  onChange={(e) => setVoteLimit(Number(e.target.value) as 1 | 2)}
                   className="border rounded-lg px-2 py-1"
                 >
                   <option value={1}>1인 1표</option>
@@ -559,7 +564,11 @@ function AdminView(props: any) {
                 <span className="text-sm text-gray-500">결과 공개</span>
                 <select
                   value={visibilityMode}
-                  onChange={(e) => setVisibilityMode(e.target.value)}
+                  onChange={(e) =>
+                    setVisibilityMode(
+                      e.target.value as "always" | "hidden" | "deadline"
+                    )
+                  }
                   className="border rounded-lg px-2 py-1"
                 >
                   <option value="always">항상 공개</option>
