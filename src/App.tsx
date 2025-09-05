@@ -13,7 +13,7 @@ import { db, ensureAuth } from "./firebase";
 type Visibility = "always" | "hidden" | "deadline";
 type VoteLimit = 1 | 2;
 type Option = { id: string; label: string; votes: number };
-type Ballot = { ids: string[]; at: number; name?: string };
+type Ballot = { ids: string[]; at: number; name?: string | null };
 
 const DEFAULT_DESC = "설명을 입력하세요. 예) 체험학습 장소를 골라요!";
 const LS_PID_KEY = "vote_last_pid";
@@ -235,7 +235,7 @@ export default function App() {
     }
   };
 
-  /** ✅ ‘추가’는 트랜잭션으로만 저장(낙관적 업데이트 제거) */
+  /** ‘추가’는 서버 트랜잭션만(낙관적 업데이트 제거) */
   const addOption = async () => {
     try {
       setIsWorking(true);
@@ -245,16 +245,12 @@ export default function App() {
       await runTransaction(ref(db, pollPath(pid)), (data: any) => {
         const d = data || defaultState();
         const current: Option[] = Array.isArray(d.options) ? d.options : [];
-
-        // 서버 스냅샷 기준으로 라벨 번호 계산
         const nextIndex = current.length + 1;
         const newItem: Option = { id: uuid(), label: `보기 ${nextIndex}`, votes: 0 };
-
         const next: Option[] = [...current, newItem];
         return { ...d, options: next, updatedAt: Date.now() };
       });
 
-      // 로컬 setOptions 추가 X : onValue 구독이 최신 상태를 내려줍니다.
       setSaveHint("옵션을 추가했어요.");
       setLinkVersion((v) => v + 1);
     } catch (e) {
@@ -294,7 +290,7 @@ export default function App() {
         const countMap: Record<string, number> = {};
         next.forEach((o: Option) => (countMap[o.id] = 0));
         Object.values(newBallots).forEach((b) =>
-          b.ids.forEach((oid) => (countMap[oid] = (countMap[oid] || 0) + 1))
+          (b.ids || []).forEach((oid) => (countMap[oid] = (countMap[oid] || 0) + 1))
         );
 
         const fixedOptions: Option[] = next.map((o: Option) => ({ ...o, votes: countMap[o.id] || 0 }));
@@ -375,10 +371,12 @@ export default function App() {
 
         const ids = selected.slice(0, data.voteLimit || 1);
         const nowMs = Date.now();
+
+        // ✅ undefined 대신 null 사용 (Firebase RTDB는 undefined 불가)
         ballotsObj[key] = {
           ids,
           at: nowMs,
-          name: data.anonymous ? undefined : voterName.trim() || undefined,
+          name: data.anonymous ? null : (voterName.trim() || null),
         };
 
         const opts: Option[] = (data.options || []).map((o: Option) => ({ ...o }));
