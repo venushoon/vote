@@ -1,6 +1,6 @@
-/// <reference types="vite/client" />
 import { initializeApp, getApps } from "firebase/app";
 import { getDatabase } from "firebase/database";
+import { getAuth, signInAnonymously } from "firebase/auth";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FB_API_KEY,
@@ -13,4 +13,11 @@ const firebaseConfig = {
 };
 
 const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
+
 export const db = getDatabase(app);
+
+// ✅ 익명 로그인
+const auth = getAuth(app);
+signInAnonymously(auth).catch(err => {
+  console.error("익명 로그인 실패:", err);
+});
