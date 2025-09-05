@@ -229,12 +229,11 @@ export default function App() {
   // ---- 투표 제출 ----
   function getStudentKey(): string {
     if (anonymous) {
-      let token = localStorage.getItem("vote_device_token");
-      if (!token) {
-        token = uuid();
-        localStorage.setItem("vote_device_token", token);
-      }
-      return token;
+      const existing = localStorage.getItem("vote_device_token");
+      if (existing) return existing;
+      const t = uuid();
+      localStorage.setItem("vote_device_token", t);
+      return t;
     }
     return voterName.trim();
   }
@@ -580,8 +579,6 @@ function AdminView(props: any) {
   } = props;
 
   const votedCount = Object.keys(ballots).length;
-
-  // 타입 안정화를 위해 entries에 명시적 제네릭 적용
   const ballotEntries: Array<[string, Ballot]> = Object.entries(ballots as Record<string, Ballot>) as Array<
     [string, Ballot]
   >;
