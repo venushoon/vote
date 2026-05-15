@@ -138,7 +138,7 @@ export default function App() {
   const [viewMode, setViewMode] = useState<"admin" | "student">(getView());
   const [adminAuthed, setAdminAuthed] = useState(!ADMIN_PIN); 
   const [pinInput, setPinInput] = useState("");
-  const [isFullscreen, setIsFullscreen] = useState(false); // 전자칠판 모드 상태
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   useEffect(() => {
     const onHash = () => setViewMode(getView());
@@ -483,7 +483,6 @@ export default function App() {
         const ballotsObj = data.ballots || {};
         if (ballotsObj[key]) return data; 
 
-        // 이중 체크 (명단 모드일 때 동일한 이름으로 누군가 투표했는지 서버에서 한 번 더 검증)
         if (data.authMode === 'roster') {
            const alreadyVoted = Object.values(ballotsObj).some((b: any) => b.name === vName || b.originalName === vName);
            if (alreadyVoted) return data;
@@ -495,9 +494,8 @@ export default function App() {
         ballotsObj[key] = {
           ids,
           at: nowMs,
-          // 익명 모드일 경우 name은 null로 저장하여 철저히 익명 보장, 단 명단 확인용으로 originalName 별도 기록
           name: data.anonymous ? null : vName,
-          originalName: vName // 관리자 삭제 기능 및 명단 대조용 내부 데이터
+          originalName: vName 
         };
 
         const opts: Option[] = (data.options || []).map((o: Option) => ({ ...o }));
@@ -718,7 +716,6 @@ export default function App() {
         </div>
 
         <div className="flex-1 flex flex-col md:flex-row p-6 md:p-8 pt-0 gap-8 h-full min-h-0">
-          {/* 좌측: QR 및 진행 상황 */}
           <div className="w-full md:w-1/3 flex flex-col gap-6 shrink-0">
             <div className="bg-white/5 rounded-[2rem] p-8 flex flex-col items-center justify-center border border-white/10 flex-1">
               <h2 className="text-2xl font-bold mb-6 text-indigo-200">투표 참여하기</h2>
@@ -749,7 +746,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* 우측: 거대 차트 */}
           <div className="w-full md:w-2/3 bg-white/5 rounded-[2rem] border border-white/10 p-8 flex flex-col min-h-0">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-2xl font-bold text-indigo-200">실시간 결과 (총 {totalVotes}표)</h2>
@@ -809,11 +805,9 @@ export default function App() {
       </div>
     );
   }
-  /* ============================================== */
 
   return (
     <div className="min-h-screen bg-[#F9FAFB] text-gray-900 flex flex-col font-sans selection:bg-indigo-100 selection:text-indigo-900">
-      {/* 상단바 */}
       <header className="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-gray-200/80 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3.5 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3.5 w-full">
@@ -866,7 +860,6 @@ export default function App() {
         )}
       </header>
 
-      {/* 메인 컨텐츠 영역 */}
       <div className="flex-1 w-full max-w-7xl mx-auto">
         {viewMode === "admin" ? (
           <AdminView
@@ -993,7 +986,6 @@ function AdminView(props: AdminViewProps) {
 
   return (
     <div className="flex flex-col md:flex-row gap-6 p-4 sm:p-6 w-full">
-      {/* 사이드바 메뉴 */}
       <aside className="w-full md:w-56 shrink-0 md:sticky top-[100px] self-start z-10">
         <nav className="flex md:flex-col gap-2 overflow-x-auto pb-2 md:pb-0 hide-scrollbar scroll-smooth">
           <button onClick={() => setActiveTab('list')} className={getTabClass('list')}>
@@ -1033,10 +1025,8 @@ function AdminView(props: AdminViewProps) {
         </nav>
       </aside>
 
-      {/* 메인 컨텐츠 영역 */}
       <main className="flex-1 min-w-0 pb-12">
 
-        {/* 0. 투표 목록 화면 */}
         {activeTab === 'list' && (
           <div className="space-y-6 max-w-4xl animate-fadeIn">
             <div className="bg-white rounded-3xl shadow-[0_2px_10px_rgb(0,0,0,0.02)] border border-gray-100 p-6 sm:p-8">
@@ -1125,7 +1115,6 @@ function AdminView(props: AdminViewProps) {
           </div>
         )}
         
-        {/* 1. 투표 설정 화면 */}
         {activeTab === 'settings' && (
           <div className="space-y-6 max-w-3xl animate-fadeIn">
             <div className="bg-white rounded-3xl shadow-[0_2px_10px_rgb(0,0,0,0.02)] border border-gray-100 p-6 sm:p-8">
@@ -1208,7 +1197,6 @@ function AdminView(props: AdminViewProps) {
                 </div>
               </div>
 
-              {/* 💡 새로 추가된 보안 인증(명렬표) 영역 */}
               <div className="mt-8 space-y-4">
                 <div className="flex items-center justify-between">
                   <div className="flex flex-col">
@@ -1306,7 +1294,6 @@ function AdminView(props: AdminViewProps) {
           </div>
         )}
 
-        {/* 2. 실시간 결과 화면 */}
         {activeTab === 'results' && (
           <div className="space-y-6 max-w-4xl animate-fadeIn">
             <div className="bg-white rounded-3xl shadow-[0_2px_10px_rgb(0,0,0,0.02)] border border-gray-100 p-6 sm:p-8 flex flex-col h-[550px]">
@@ -1315,7 +1302,6 @@ function AdminView(props: AdminViewProps) {
                   <h2 className="text-xl font-bold text-gray-800">실시간 투표 결과</h2>
                   <div className="text-sm font-bold px-4 py-2 bg-indigo-50 text-indigo-700 rounded-xl border border-indigo-100 hidden sm:block">참여 {votedCount}명 · 총 {totalVotes}표</div>
                 </div>
-                {/* 💡 새로 추가된 전자칠판(전체화면) 버튼 */}
                 <button 
                   onClick={() => setIsFullscreen(true)}
                   className="flex items-center gap-2 px-5 py-2.5 bg-gray-900 text-white rounded-xl text-sm font-bold shadow-md hover:bg-gray-800 hover:shadow-lg transition-all active:scale-95"
@@ -1384,7 +1370,6 @@ function AdminView(props: AdminViewProps) {
           </div>
         )}
 
-        {/* 3. 투표자 목록 화면 */}
         {activeTab === 'voters' && (
           <div className="space-y-6 max-w-3xl animate-fadeIn">
             <div className="bg-white rounded-3xl shadow-[0_2px_10px_rgb(0,0,0,0.02)] border border-gray-100 p-6 sm:p-8">
@@ -1400,7 +1385,6 @@ function AdminView(props: AdminViewProps) {
               ) : (
                 <ul className="divide-y divide-gray-100 pr-2 max-h-[600px] overflow-y-auto custom-scrollbar">
                   {ballotEntries.map(([id, info]) => {
-                    // 명단 인증일 경우 originalName을 활용하여 관리자에게는 누구인지 명확히 표시
                     const displayName = (info as any).originalName || info?.name || '익명 투표자';
                     return (
                       <li key={id} className="flex items-center justify-between py-4 hover:bg-gray-50 px-4 rounded-2xl transition-colors group">
@@ -1430,7 +1414,6 @@ function AdminView(props: AdminViewProps) {
           </div>
         )}
 
-        {/* 4. 학생용 화면 링크 화면 */}
         {activeTab === 'link' && (
           <div className="space-y-6 max-w-2xl animate-fadeIn">
             <div className="bg-white rounded-3xl shadow-[0_2px_10px_rgb(0,0,0,0.02)] border border-gray-100 p-6 sm:p-8">
@@ -1483,11 +1466,11 @@ function AdminView(props: AdminViewProps) {
   );
 }
 
-/* ========= Student View (Redesigned & Includes Security) ========= */
+/* ========= Student View ========= */
 function StudentView(props: StudentViewProps) {
   const {
     desc, options, voteLimit, anonymous,
-    visibilityMode, authMode, deadlineAt, isVisible,
+    visibilityMode, authMode, voterList, deadlineAt, isVisible,
     voterName, setVoterName, selected, setSelected,
     submitVote, totalVotes, graphData, isClosed,
     pidReady, isWorking,
@@ -1511,17 +1494,197 @@ function StudentView(props: StudentViewProps) {
         </div>
       )}
 
-      {/* 안내 영역 */}
       <div className="bg-white rounded-[2rem] shadow-sm border border-gray-100 p-6 sm:p-8">
         <div className="text-sm font-extrabold text-indigo-600 mb-3 tracking-wide">안내사항</div>
         <div className="text-lg sm:text-xl whitespace-pre-wrap text-gray-800 leading-relaxed font-medium">{desc}</div>
       </div>
 
-      {/* 투표 폼 영역 */}
       <div className="bg-white rounded-[2rem] shadow-sm border border-gray-100 p-6 sm:p-8">
         {isClosed && (
           <div className="mb-6 p-5 rounded-2xl bg-rose-50 text-rose-700 text-base border border-rose-100 font-bold text-center flex flex-col items-center gap-2">
             <svg fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-8 h-8 text-rose-500">
               <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
             </svg>
-            투표가 마감되어 더
+            투표가 마감되어 더 이상 제출할 수 없습니다.
+          </div>
+        )}
+
+        {submitted && (
+          <div className="mb-8 p-6 bg-emerald-50 border-2 border-emerald-100 rounded-2xl text-center flex flex-col items-center gap-3 animate-fadeIn">
+            <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mb-1">
+              <svg fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor" className="w-8 h-8">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+              </svg>
+            </div>
+            <p className="text-xl font-extrabold text-emerald-800">투표가 성공적으로 제출되었습니다!</p>
+            <p className="text-emerald-600 font-medium">참여해 주셔서 감사합니다.</p>
+          </div>
+        )}
+
+        {(!anonymous || authMode === 'roster') && !submitted && (
+          <div className="mb-8">
+            <label className="flex flex-col sm:flex-row sm:items-end gap-2 text-base font-extrabold text-gray-800 mb-3">
+              이름 또는 번호
+              {anonymous && authMode === 'roster' && (
+                <span className="text-sm font-bold text-rose-500 bg-rose-50 px-2 py-0.5 rounded">익명투표: 본인 확인용으로만 쓰입니다</span>
+              )}
+            </label>
+            <input
+              value={voterName}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setVoterName(e.target.value)}
+              placeholder={authMode === 'roster' ? "선생님이 지정하신 정확한 이름(번호) 입력" : "여기에 입력하세요"}
+              className="w-full border-2 border-gray-200 rounded-2xl px-5 py-4 text-lg font-medium outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 transition-all bg-gray-50 focus:bg-white placeholder-gray-400"
+              disabled={isClosed || isWorking}
+            />
+          </div>
+        )}
+
+        {!submitted && (
+          <>
+            <div className="mb-4 flex items-center justify-between">
+              <label className="text-base font-extrabold text-gray-800 flex items-center gap-2">
+                항목 선택 
+                <span className="text-sm font-bold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-lg">({selected.length}/{voteLimit})</span>
+              </label>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {options.map((o: Option) => {
+                const checked = selected.includes(o.id);
+                const disabled = isClosed || isWorking || (!checked && selected.length >= voteLimit);
+                return (
+                  <button
+                    key={o.id}
+                    onClick={() =>
+                      setSelected((prev: string[]) => {
+                        if (isClosed || isWorking) return prev;
+                        if (prev.includes(o.id)) return prev.filter((x: string) => x !== o.id);
+                        if (prev.length >= voteLimit) return prev;
+                        return [...prev, o.id];
+                      })
+                    }
+                    className={`group relative flex items-center justify-between p-5 md:p-6 rounded-2xl border-2 transition-all duration-300 text-left w-full
+                      ${checked 
+                        ? "bg-indigo-50 border-indigo-500 shadow-[0_4px_20px_-4px_rgba(99,102,241,0.2)] transform scale-[1.02]" 
+                        : "bg-white border-gray-200 hover:border-indigo-300 hover:bg-gray-50"} 
+                      ${disabled && !checked ? "opacity-50 cursor-not-allowed bg-gray-50" : ""}
+                    `}
+                    disabled={disabled}
+                  >
+                    <span className={`font-bold text-lg sm:text-xl pr-8 ${checked ? "text-indigo-900" : "text-gray-800"}`}>
+                      {o.label}
+                    </span>
+                    
+                    <div className={`w-7 h-7 shrink-0 rounded-full border-2 flex items-center justify-center transition-colors duration-300
+                      ${checked ? "bg-indigo-600 border-indigo-600 text-white" : "border-gray-300 group-hover:border-indigo-400"}
+                    `}>
+                      {checked && (
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                        </svg>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="mt-10 flex justify-center">
+              <button
+                onClick={onSubmit}
+                className={`w-full sm:w-auto min-w-[200px] px-10 py-4.5 rounded-2xl font-bold text-lg text-white shadow-lg transition-all duration-300
+                  ${(isClosed || !pidReady || isWorking) ? "bg-gray-400 opacity-50 cursor-not-allowed shadow-none" : "bg-[#10B981] hover:bg-[#059669] hover:shadow-xl active:scale-95"}
+                `}
+                disabled={isClosed || !pidReady || isWorking}
+              >
+                투표 제출하기
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="bg-white rounded-[2rem] shadow-sm border border-gray-100 p-6 sm:p-8">
+        <div className="flex items-center justify-between mb-8">
+          <h2 className="text-xl font-extrabold text-gray-800">현재 결과</h2>
+          {isVisible && <div className="text-sm font-bold px-4 py-2 bg-gray-100 rounded-xl text-gray-600">총 {totalVotes}표</div>}
+        </div>
+        
+        <div className="w-full h-[280px] sm:h-[350px]">
+          {isVisible ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={graphData} margin={{ top: 25, right: 10, bottom: 20, left: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" opacity={0.3} vertical={false} />
+                <XAxis
+                  dataKey="name"
+                  interval={0}
+                  angle={0}
+                  tick={{ fontSize: 13, fill: '#4B5563', fontFamily: "Inter, system-ui, sans-serif", fontWeight: 600 }}
+                  axisLine={false}
+                  tickLine={false}
+                  dy={15}
+                />
+                <YAxis
+                  allowDecimals={false}
+                  tick={{ fontSize: 13, fill: '#9CA3AF', fontFamily: "Inter, system-ui, sans-serif", fontWeight: 500 }}
+                  axisLine={false}
+                  tickLine={false}
+                  width={30}
+                />
+                <Tooltip 
+                  formatter={(v: number) => [`${v} 표`, '득표수']} 
+                  cursor={{fill: '#F3F4F6', opacity: 0.6}}
+                  contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 25px -5px rgb(0 0 0 / 0.1)', padding: '12px 16px', fontWeight: 'bold' }} 
+                />
+                <Bar
+                  dataKey="votes"
+                  radius={[8, 8, 0, 0]}
+                  barSize={48}
+                  isAnimationActive
+                  animationDuration={800}
+                  animationEasing="ease-out"
+                >
+                  {graphData.map((d: GraphDatum) => (
+                    <Cell key={d._i} fill={COLORS[d._i % COLORS.length]} />
+                  ))}
+                  <LabelList
+                    dataKey="votes"
+                    position="top"
+                    style={{ fontSize: 16, fill: '#1F2937', fontWeight: 800, fontFamily: "Inter, system-ui, sans-serif" }}
+                    dy={-5}
+                  />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="h-full flex flex-col items-center justify-center text-gray-500 bg-gray-50 rounded-3xl border-2 border-dashed border-gray-200 p-6 text-center">
+              {visibilityMode === "deadline" && deadlineAt ? (
+                <>
+                  <div className="w-16 h-16 bg-white shadow-sm rounded-2xl flex items-center justify-center mb-4">
+                    <svg className="w-8 h-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <div className="font-extrabold text-lg text-gray-700">결과는 마감 후 공개됩니다</div>
+                  <div className="mt-3 text-sm font-bold text-gray-500 bg-white border border-gray-200 inline-flex px-4 py-2 rounded-xl shadow-sm">
+                    공개 예정: {new Date(deadlineAt).toLocaleString()}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="w-16 h-16 bg-white shadow-sm rounded-2xl flex items-center justify-center mb-4">
+                    <svg className="w-8 h-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                    </svg>
+                  </div>
+                  <div className="font-extrabold text-lg text-gray-700">현재 결과 비공개 상태입니다</div>
+                  <p className="mt-2 text-sm font-medium text-gray-500">선생님(관리자) 설정에 의해 숨겨져 있습니다.</p>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </main>
+  );
+}
