@@ -1,0 +1,13 @@
+# dependencies
+node_modules
+.pnp
+.pnp.js
+
+# backups
+*_bak.tsx
+*.bak
+*.orig
+
+# env
+.env
+.env.local
