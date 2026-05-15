@@ -120,7 +120,7 @@ interface StudentViewProps {
 /* ========= App ========= */
 export default function App() {
   const [viewMode, setViewMode] = useState<"admin" | "student">(getView());
-  const [adminAuthed, setAdminAuthed] = useState(!ADMIN_PIN); // PIN이 설정 안되어 있으면 기본 패스 (보안상 설정 권장)
+  const [adminAuthed, setAdminAuthed] = useState(!ADMIN_PIN); 
   const [pinInput, setPinInput] = useState("");
 
   useEffect(() => {
@@ -154,7 +154,7 @@ export default function App() {
   /* ---------- Timer for real-time deadline check ---------- */
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 10000); // 10초 주기 갱신
+    const timer = setInterval(() => setNow(Date.now()), 10000); 
     return () => clearInterval(timer);
   }, []);
 
@@ -171,7 +171,6 @@ export default function App() {
     history.replaceState({}, "", u.toString());
   };
 
-  /** ensure auth + create pid if absent */
   const ensurePid = async (): Promise<string> => {
     await ensureAuth();
     let pid = getActivePid();
@@ -266,7 +265,6 @@ export default function App() {
     return now >= deadlineAt;
   }, [visibilityMode, deadlineAt, now]);
 
-  // 관리자에선 '항상 숨김'이라도 결과는 볼 수 있게
   const isVisibleAdmin = visibilityMode === "hidden" ? true : baseVisible;
   const isVisibleStudent = baseVisible;
 
@@ -334,7 +332,6 @@ export default function App() {
     }
   };
 
-  // ✅ NodeJS.Timeout 대신 브라우저 환경에 맞는 ReturnType<typeof setTimeout> 사용
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const setOptionLabel = (id: string, label: string) => {
     setOptions((prev: Option[]) => {
@@ -343,7 +340,7 @@ export default function App() {
       if (debounceTimer.current) clearTimeout(debounceTimer.current);
       debounceTimer.current = setTimeout(() => {
         void patchPoll({ options: next });
-      }, 500); // 500ms 디바운싱 적용
+      }, 500); 
 
       return next;
     });
@@ -443,13 +440,12 @@ export default function App() {
       const res = await runTransaction(ref(db, pollPath(pid)), (data: any) => {
         if (!data) return data;
         
-        // 트랜잭션 내부에서 실시간 마감 상태 체크
         if (data.manualClosed || (data.expectedVoters > 0 && Object.keys(data.ballots || {}).length >= data.expectedVoters)) {
-          return; // 트랜잭션 취소 (마감됨)
+          return; 
         }
 
         const ballotsObj = data.ballots || {};
-        if (ballotsObj[key]) return data; // 이미 투표함
+        if (ballotsObj[key]) return data; 
 
         const ids = selected.slice(0, data.voteLimit || 1);
         const nowMs = Date.now();
@@ -517,7 +513,7 @@ export default function App() {
     }
   };
 
-  /* ---------- reset to defaults (keep same pid) ---------- */
+  /* ---------- reset to defaults ---------- */
   const resetAllToDefaults = async () => {
     try {
       if (!confirm("모든 설정과 결과를 기본값으로 초기화할까요?")) return;
@@ -642,17 +638,16 @@ export default function App() {
     return <div className="min-h-screen grid place-items-center text-gray-500">초기화 중입니다…</div>;
   }
 
-  // 관리자 모드 접속 시 인증 화면 표시
   if (viewMode === "admin" && !adminAuthed) {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-white to-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-b from-white to-gray-50 flex items-center justify-center px-4">
         <form 
           onSubmit={(e) => {
             e.preventDefault();
             if (pinInput === ADMIN_PIN) setAdminAuthed(true);
             else alert("비밀번호가 일치하지 않습니다.");
           }} 
-          className="bg-white p-8 rounded-2xl shadow-lg flex flex-col gap-4 max-w-sm w-full"
+          className="bg-white p-6 sm:p-8 rounded-2xl shadow-lg flex flex-col gap-4 max-w-sm w-full"
         >
           <div className="flex items-center gap-3 mb-2">
             <div className="h-10 w-10 rounded-2xl bg-indigo-600 text-white grid place-items-center font-bold shadow">V</div>
@@ -664,9 +659,9 @@ export default function App() {
             placeholder="비밀번호 입력" 
             value={pinInput}
             onChange={(e) => setPinInput(e.target.value)}
-            className="border p-3 rounded-xl outline-none focus:ring-2 focus:ring-indigo-300"
+            className="border p-3 rounded-xl outline-none focus:ring-2 focus:ring-indigo-300 text-base"
           />
-          <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white p-3 rounded-xl shadow mt-2">
+          <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white p-3 rounded-xl shadow mt-2 transition">
             인증하기
           </button>
         </form>
@@ -682,11 +677,11 @@ export default function App() {
       <header className="sticky top-0 z-10 bg-white/90 backdrop-blur border-b">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-2xl bg-indigo-600 text-white grid place-items-center font-bold shadow">V</div>
-            <div>
+            <div className="h-10 w-10 shrink-0 rounded-2xl bg-indigo-600 text-white grid place-items-center font-bold shadow">V</div>
+            <div className="min-w-0">
               {viewMode === "admin" ? (
                 <input
-                  className="text-xl md:text-2xl font-semibold bg-transparent border-b border-transparent focus:border-indigo-400 outline-none px-1 rounded"
+                  className="text-lg sm:text-xl md:text-2xl font-semibold bg-transparent border-b border-transparent focus:border-indigo-400 outline-none px-1 rounded w-full truncate"
                   value={title}
                   onChange={async (e: React.ChangeEvent<HTMLInputElement>) => {
                     const v = e.target.value;
@@ -696,21 +691,21 @@ export default function App() {
                   aria-label="제목"
                 />
               ) : (
-                <div className="text-xl md:text-2xl font-semibold">{title}</div>
+                <div className="text-lg sm:text-xl md:text-2xl font-semibold truncate">{title}</div>
               )}
-              <div className="text-xs text-gray-500">실시간 동기화 / 1·2표 / QR 학생화면 / 결과공개 제어 / 자동마감</div>
+              <div className="text-[10px] sm:text-xs text-gray-500 truncate">실시간 동기화 / 1·2표 / QR 학생화면 / 결과공개 제어 / 자동마감</div>
             </div>
           </div>
 
           {viewMode === "admin" ? (
-            <div className="flex items-center gap-2">
-              <button onClick={saveJSON} className="px-3 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 shadow" disabled={isWorking}>JSON 저장</button>
-              <button onClick={saveCSV} className="px-3 py-2 rounded-xl bg-white border hover:bg-gray-50 shadow" disabled={isWorking}>CSV 저장</button>
-              <button onClick={() => fileInputRef.current?.click()} className="px-3 py-2 rounded-xl bg-white border hover:bg-gray-50 shadow" disabled={isWorking}>불러오기</button>
+            <div className="hidden sm:flex items-center gap-2 shrink-0">
+              <button onClick={saveJSON} className="px-3 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 shadow text-sm" disabled={isWorking}>JSON</button>
+              <button onClick={saveCSV} className="px-3 py-2 rounded-xl bg-white border hover:bg-gray-50 shadow text-sm" disabled={isWorking}>CSV</button>
+              <button onClick={() => fileInputRef.current?.click()} className="px-3 py-2 rounded-xl bg-white border hover:bg-gray-50 shadow text-sm" disabled={isWorking}>로드</button>
               <input ref={fileInputRef} type="file" accept="application/json" className="hidden" onChange={loadFromFile} />
             </div>
           ) : (
-            <div className="text-xs text-gray-500">학생 화면</div>
+            <div className="text-xs text-gray-500 shrink-0">학생 화면</div>
           )}
         </div>
 
@@ -724,7 +719,7 @@ export default function App() {
                 <span className="px-2 py-1 rounded-full bg-emerald-100 text-emerald-700 border">진행중</span>
               )}
               <div className="flex-1 h-2 bg-white/60 rounded-full overflow-hidden">
-                <div className="h-full bg-indigo-500" style={{ width: `${expectedVoters ? Math.min(100, (votedCount / expectedVoters) * 100) : 0}%` }} />
+                <div className="h-full bg-indigo-500 transition-all duration-500" style={{ width: `${expectedVoters ? Math.min(100, (votedCount / expectedVoters) * 100) : 0}%` }} />
               </div>
             </div>
           </div>
@@ -777,7 +772,7 @@ export default function App() {
         />
       )}
 
-      <footer className="max-w-6xl mx-auto px-4 pb-10 text-xs text-gray-400">
+      <footer className="max-w-6xl mx-auto px-4 pb-10 text-xs text-gray-400 text-center sm:text-left">
         방 ID: <span className="font-mono">{getActivePid()}</span> · Made for classroom by 교무
       </footer>
     </div>
@@ -807,9 +802,9 @@ function AdminView(props: AdminViewProps) {
   const ballotEntries: Array<[string, Ballot]> = Object.entries(ballots || {}) as any;
 
   return (
-    <main className="max-w-6xl mx-auto px-4 py-6 grid lg:grid-cols-5 gap-6">
+    <main className="max-w-6xl mx-auto px-3 sm:px-4 py-4 sm:py-6 grid lg:grid-cols-5 gap-4 sm:gap-6">
       {/* 왼쪽: 설정 */}
-      <section className="lg:col-span-2 space-y-6">
+      <section className="lg:col-span-2 space-y-4 sm:space-y-6">
         {/* 설명 */}
         <div className="bg-white rounded-2xl shadow p-4">
           <label className="text-sm text-gray-500">설명</label>
@@ -817,7 +812,7 @@ function AdminView(props: AdminViewProps) {
             value={desc}
             onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setDesc(e.target.value)}
             onFocus={() => { if (desc === DEFAULT_DESC) setDesc(""); }}
-            className="w-full mt-2 p-3 border rounded-xl outline-none focus:ring-2 focus:ring-indigo-300"
+            className="w-full mt-2 p-3 border rounded-xl outline-none focus:ring-2 focus:ring-indigo-300 text-sm sm:text-base"
             rows={3}
             placeholder={DEFAULT_DESC}
           />
@@ -829,7 +824,7 @@ function AdminView(props: AdminViewProps) {
                 <select
                   value={voteLimit}
                   onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setVoteLimit(Number(e.target.value) as VoteLimit)}
-                  className="border rounded-lg px-2 py-1"
+                  className="border rounded-lg px-2 py-1 text-sm sm:text-base"
                   disabled={isWorking}
                 >
                   <option value={1}>1인 1표</option>
@@ -839,31 +834,33 @@ function AdminView(props: AdminViewProps) {
 
               <div className="flex items-center gap-2">
                 <label className="text-sm text-gray-500">익명 모드</label>
-                <input type="checkbox" className="scale-110" checked={anonymous} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setAnonymous(e.target.checked)} disabled={isWorking} />
+                <input type="checkbox" className="scale-125" checked={anonymous} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setAnonymous(e.target.checked)} disabled={isWorking} />
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 w-full sm:w-auto">
                 <span className="text-sm text-gray-500">결과 공개</span>
                 <select
                   value={visibilityMode}
                   onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setVisibilityMode(e.target.value as Visibility)}
-                  className="border rounded-lg px-2 py-1"
+                  className="border rounded-lg px-2 py-1 text-sm sm:text-base flex-1 sm:flex-none"
                   disabled={isWorking}
                 >
                   <option value="always">항상 공개</option>
-                  <option value="hidden">항상 숨김(학생만)</option>
-                  <option value="deadline">마감 후 공개</option>
+                  <option value="hidden">항상 숨김</option>
+                  <option value="deadline">마감 후</option>
                 </select>
-                {visibilityMode === "deadline" && (
+              </div>
+              {visibilityMode === "deadline" && (
+                <div className="w-full">
                   <input
                     type="datetime-local"
-                    className="border rounded-lg px-2 py-1"
+                    className="border rounded-lg px-2 py-1 text-sm sm:text-base w-full"
                     value={deadlineAt ? new Date(deadlineAt).toISOString().slice(0, 16) : ""}
                     onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDeadlineAt(e.target.value ? new Date(e.target.value).getTime() : null)}
                     disabled={isWorking}
                   />
-                )}
-              </div>
+                </div>
+              )}
             </div>
 
             {/* 투표 인원 / 마감 */}
@@ -872,26 +869,26 @@ function AdminView(props: AdminViewProps) {
                 <span className="text-sm text-gray-500">투표 인원</span>
                 <input
                   type="text" inputMode="numeric" pattern="[0-9]*"
-                  className="w-24 border rounded-lg px-2 py-1"
+                  className="w-20 sm:w-24 border rounded-lg px-2 py-1 text-sm sm:text-base"
                   value={expectedVotersText}
                   onChange={onExpectedChange}
                   placeholder="예: 25"
                   disabled={isWorking}
                 />
-                <span className="text-xs text-gray-500">빈 칸 가능 · 0=자동마감 없음</span>
+                <span className="text-xs text-gray-400">0=자동마감 안함</span>
               </div>
               <div className="flex items-center gap-2">
                 {!isClosed ? (
-                  <button onClick={closeNow} className="px-2 py-1 text-xs rounded-md bg-rose-600 text-white hover:bg-rose-700 shadow" disabled={isWorking}>마감</button>
+                  <button onClick={closeNow} className="px-3 py-1.5 text-xs sm:text-sm rounded-lg bg-rose-600 text-white hover:bg-rose-700 shadow" disabled={isWorking}>마감</button>
                 ) : (
-                  <button onClick={reopen} className="px-2 py-1 text-xs rounded-md bg-emerald-600 text-white hover:bg-emerald-700 shadow" disabled={isWorking}>재개</button>
+                  <button onClick={reopen} className="px-3 py-1.5 text-xs sm:text-sm rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 shadow" disabled={isWorking}>재개</button>
                 )}
               </div>
             </div>
 
-            <div className="flex items-center justify-between text-sm text-gray-500">
+            <div className="flex items-center justify-between text-xs sm:text-sm text-gray-500 mt-2">
               <div>참여: <span className="font-semibold">{votedCount}</span> · 총 표수: <span className="font-semibold">{totalVotes}</span></div>
-              <div>{saveHint}</div>
+              <div className="text-emerald-600 font-medium">{saveHint}</div>
             </div>
           </div>
         </div>
@@ -901,56 +898,53 @@ function AdminView(props: AdminViewProps) {
           <div className="flex items-center justify-between">
             <h2 className="font-semibold">보기(옵션)</h2>
             <div className="flex items-center gap-2">
-              <button onClick={addOption} className="px-3 py-1.5 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700" disabled={isWorking}>추가</button>
-              <button onClick={saveToCloud} className="px-3 py-1.5 text-sm rounded-lg bg-white border hover:bg-gray-50" disabled={isWorking} title="현재 옵션/설정을 DB에 저장하고 QR/링크를 갱신합니다">저장</button>
+              <button onClick={addOption} className="px-3 py-1.5 text-xs sm:text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700" disabled={isWorking}>추가</button>
+              <button onClick={saveToCloud} className="px-3 py-1.5 text-xs sm:text-sm rounded-lg bg-white border hover:bg-gray-50" disabled={isWorking}>저장</button>
             </div>
           </div>
           <ul className="mt-3 space-y-2">
             {options.map((o: Option, idx: number) => (
               <li key={o.id} className="flex items-center gap-2">
                 <span
-                  className="h-5 w-5 rounded-md border"
+                  className="h-5 w-5 shrink-0 rounded-md border"
                   style={{ backgroundColor: COLORS[idx % COLORS.length] }}
-                  title="옵션 색상"
                 />
-                <input className="flex-1 border rounded-lg px-2 py-1" value={o.label} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setOptionLabel(o.id, e.target.value)} disabled={isWorking} />
-                <span className="text-xs text-gray-500 w-14 text-right">{o.votes} 표</span>
-                <button onClick={() => removeOption(o.id)} className="px-2 py-1 text-xs rounded-md bg-white border hover:bg-gray-50" disabled={isWorking}>삭제</button>
+                <input className="flex-1 border rounded-lg px-2 py-1.5 text-sm sm:text-base min-w-0" value={o.label} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setOptionLabel(o.id, e.target.value)} disabled={isWorking} />
+                <span className="text-xs text-gray-500 w-10 sm:w-14 text-right shrink-0">{o.votes}표</span>
+                <button onClick={() => removeOption(o.id)} className="px-2 py-1 text-xs rounded-md bg-rose-50 text-rose-600 border border-rose-100 hover:bg-rose-100 shrink-0" disabled={isWorking}>삭제</button>
               </li>
             ))}
           </ul>
-          <div className="mt-3 flex items-center justify-between text-sm text-gray-500">
-            <button onClick={resetAllToDefaults} className="px-3 py-1.5 rounded-lg bg-white border hover:bg-gray-50" disabled={isWorking}>전체 초기화</button>
-            <button onClick={recountVotes} className="px-3 py-1.5 rounded-lg bg-white border hover:bg-gray-50" disabled={isWorking}>표 재계산</button>
+          <div className="mt-4 flex items-center justify-between text-sm text-gray-500">
+            <button onClick={resetAllToDefaults} className="px-3 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs sm:text-sm" disabled={isWorking}>전체 초기화</button>
+            <button onClick={recountVotes} className="px-3 py-1.5 rounded-lg bg-white border hover:bg-gray-50 text-xs sm:text-sm" disabled={isWorking}>표 재계산</button>
           </div>
         </div>
 
         {/* 학생 링크 & QR */}
         <div className="bg-white rounded-2xl shadow p-4">
           <div className="flex items-center justify-between">
-            <h2 className="font-semibold">학생용 화면 링크</h2>
+            <h2 className="font-semibold">학생용 접속</h2>
             <div className="flex items-center gap-2">
-              <button onClick={() => setShowLink((v: boolean) => !v)} className="px-3 py-1.5 text-sm rounded-lg bg-white border hover:bg-gray-50">{showLink ? "숨기기" : "주소 보기"}</button>
-              <a href={studentLink} className="px-3 py-1.5 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">열기</a>
+              <button onClick={() => setShowLink((v: boolean) => !v)} className="px-3 py-1.5 text-xs sm:text-sm rounded-lg bg-white border hover:bg-gray-50">{showLink ? "숨기기" : "주소 보기"}</button>
+              <a href={studentLink} className="px-3 py-1.5 text-xs sm:text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">열기</a>
             </div>
           </div>
-          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
-            <div className="flex items-center justify-center p-3 bg-gray-50 rounded-xl border">
-              <QRCode value={studentLink} size={160} />
+          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
+            <div className="flex items-center justify-center p-4 bg-gray-50 rounded-xl border">
+              <QRCode value={studentLink} size={140} className="w-full max-w-[140px] h-auto" />
             </div>
             <div className="text-sm text-gray-600 leading-relaxed">
               {!showLink ? (
-                <p className="text-xs text-gray-500">주소는 숨김 상태입니다. <span className="font-medium">[주소 보기]</span>로 확인하거나 <span className="font-medium">복사</span>하세요.</p>
+                <p className="text-xs sm:text-sm text-gray-500">주소는 숨김 상태입니다. <span className="font-medium">[주소 보기]</span>로 확인하세요.</p>
               ) : (
                 <div className="space-y-2">
-                  <input value={studentLink} readOnly className="w-full text-xs border rounded-lg px-2 py-1 break-all" onFocus={(e) => e.currentTarget.select()} />
+                  <input value={studentLink} readOnly className="w-full text-xs border rounded-lg px-2 py-2 bg-gray-50 break-all" onFocus={(e) => e.currentTarget.select()} />
                   <div className="flex gap-2">
-                    <button onClick={copyStudentLink} className="px-2 py-1 text-xs rounded-md bg-white border hover:bg-gray-50">복사</button>
-                    <button onClick={() => setShowLink(false)} className="px-2 py-1 text-xs rounded-md bg-white border hover:bg-gray-50">숨기기</button>
+                    <button onClick={copyStudentLink} className="flex-1 py-1.5 text-xs rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-100 font-medium">주소 복사</button>
                   </div>
                 </div>
               )}
-              <p className="mt-2 text-xs text-gray-500">같은 방(pid)으로 접속한 모든 기기의 결과가 실시간으로 동기화됩니다.</p>
             </div>
           </div>
         </div>
@@ -958,20 +952,20 @@ function AdminView(props: AdminViewProps) {
         {/* 투표자 목록 */}
         <div className="bg-white rounded-2xl shadow p-4">
           <div className="flex items-center justify-between">
-            <h2 className="font-semibold">투표자 목록</h2>
+            <h2 className="font-semibold">투표자 목록 ({ballotEntries.length}명)</h2>
           </div>
           {ballotEntries.length === 0 ? (
-            <p className="text-sm text-gray-500 mt-2">아직 투표가 없습니다.</p>
+            <p className="text-sm text-gray-500 mt-3 text-center py-4 bg-gray-50 rounded-xl">아직 투표가 없습니다.</p>
           ) : (
-            <ul className="mt-2 max-h-48 overflow-auto divide-y">
+            <ul className="mt-3 max-h-48 overflow-y-auto divide-y pr-2">
               {ballotEntries.map(([id, info]) => (
-                <li key={id} className="flex items-center justify-between py-2 text-sm">
-                  <div>
-                    <div className="font-medium">{info?.name || id}</div>
-                    <div className="text-xs text-gray-500">{new Date(info.at).toLocaleString()}</div>
+                <li key={id} className="flex items-center justify-between py-2.5 text-sm">
+                  <div className="min-w-0 pr-2">
+                    <div className="font-medium truncate">{info?.name || id}</div>
+                    <div className="text-xs text-gray-400">{new Date(info.at).toLocaleString()}</div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <div className="text-xs text-gray-500">{(info.ids || []).join(", ")}</div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <div className="text-xs text-gray-500 truncate max-w-[80px] sm:max-w-[150px]">{(info.ids || []).join(", ")}</div>
                     <button onClick={() => removeVoter(id)} className="px-2 py-1 text-xs rounded-md bg-white border hover:bg-gray-50" disabled={isWorking}>삭제</button>
                   </div>
                 </li>
@@ -982,34 +976,39 @@ function AdminView(props: AdminViewProps) {
       </section>
 
       {/* 오른쪽: 실시간 결과 */}
-      <section className="lg:col-span-3 space-y-6">
-        <div className="bg-white rounded-2xl shadow p-4 h-[460px]">
-          <div className="flex items-center justify-between">
+      <section className="lg:col-span-3 space-y-4 sm:space-y-6">
+        <div className="bg-white rounded-2xl shadow p-4 flex flex-col h-[400px] sm:h-[460px]">
+          <div className="flex items-center justify-between mb-4">
             <h2 className="font-semibold">실시간 결과</h2>
             <div className="text-sm text-gray-500">참여 {votedCount} · 총 {totalVotes}표</div>
           </div>
-          <div className="w-full h-[400px]">
+          <div className="flex-1 w-full min-h-0">
             {isVisible ? (
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={graphData} margin={{ top: 20, right: 20, bottom: 24, left: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" opacity={0.35} />
+                <BarChart data={graphData} margin={{ top: 20, right: 10, bottom: 20, left: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.35} vertical={false} />
                   <XAxis
                     dataKey="name"
                     interval={0}
-                    angle={-10}
+                    angle={-15}
                     textAnchor="end"
-                    height={48}
-                    tick={{ fontSize: 13, fontFamily: "Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif" }}
+                    height={40}
+                    tick={{ fontSize: 12, fill: '#6B7280', fontFamily: "Inter, system-ui, sans-serif" }}
+                    axisLine={false}
+                    tickLine={false}
                   />
                   <YAxis
                     allowDecimals={false}
-                    tick={{ fontSize: 13, fontFamily: "Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif" }}
+                    tick={{ fontSize: 12, fill: '#6B7280', fontFamily: "Inter, system-ui, sans-serif" }}
+                    axisLine={false}
+                    tickLine={false}
+                    width={30}
                   />
-                  <Tooltip formatter={(v: number) => `${v} 표`} />
+                  <Tooltip formatter={(v: number) => [`${v} 표`, '득표수']} cursor={{fill: '#F3F4F6'}} />
                   <Bar
                     dataKey="votes"
-                    radius={[10, 10, 0, 0]}
-                    barSize={36}
+                    radius={[6, 6, 0, 0]}
+                    barSize={40}
                     isAnimationActive
                     animationDuration={700}
                     animationEasing="ease-out"
@@ -1020,23 +1019,28 @@ function AdminView(props: AdminViewProps) {
                     <LabelList
                       dataKey="votes"
                       position="top"
-                      style={{ fontSize: 13, fontFamily: "Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif" }}
+                      style={{ fontSize: 12, fill: '#4B5563', fontWeight: 600, fontFamily: "Inter, system-ui, sans-serif" }}
                     />
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
             ) : (
-              <div className="h-full grid place-items-center text-gray-400">결과 비공개 상태입니다.</div>
+              <div className="h-full flex flex-col items-center justify-center text-gray-400 bg-gray-50 rounded-xl">
+                <svg className="w-12 h-12 mb-2 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                </svg>
+                결과 비공개 상태입니다
+              </div>
             )}
           </div>
         </div>
 
         <div className="bg-indigo-50 rounded-2xl border border-indigo-100 p-4">
-          <h3 className="font-semibold">진행 팁</h3>
-          <ul className="list-disc pl-5 text-sm mt-2 space-y-1">
-            <li>링크/QR의 <code>?pid=방ID</code> 가 같으면 어떤 기기에서 투표해도 결과가 하나로 합쳐집니다.</li>
-            <li>새로고침은 서버값을 다시 불러와 누계가 유지됩니다.</li>
-            <li>“전체 초기화”만 데이터가 0으로 리셋됩니다(방 ID는 유지).</li>
+          <h3 className="font-semibold text-indigo-900">💡 진행 팁</h3>
+          <ul className="list-disc pl-5 text-sm mt-2 space-y-1.5 text-indigo-800/80">
+            <li>링크나 QR의 <code>?pid=방ID</code>가 같으면 모든 기기에서 결과가 하나로 합쳐집니다.</li>
+            <li>새로고침을 해도 서버 데이터를 불러와 누계가 그대로 유지됩니다.</li>
+            <li><span className="font-semibold">전체 초기화</span>를 눌러야만 투표수가 0으로 리셋됩니다.</li>
           </ul>
         </div>
       </section>
@@ -1064,105 +1068,141 @@ function StudentView(props: StudentViewProps) {
   };
 
   return (
-    <main className="max-w-3xl mx-auto px-4 py-6 space-y-6">
+    <main className="max-w-3xl mx-auto px-3 sm:px-4 py-4 sm:py-6 space-y-4 sm:space-y-6">
       {!pidReady && (
-        <div className="bg-amber-50 border border-amber-200 text-amber-800 p-3 rounded-xl text-sm">
-          이 화면은 아직 방에 연결되지 않았습니다. QR 코드나 링크로 다시 접속해 주세요.
+        <div className="bg-amber-50 border border-amber-200 text-amber-800 p-4 rounded-xl text-sm font-medium text-center shadow-sm">
+          방에 연결되지 않았습니다. QR 코드나 링크로 다시 접속해 주세요.
         </div>
       )}
 
-      <div className="bg-white rounded-2xl shadow p-4">
-        <div className="text-sm text-gray-500">안내</div>
-        <div className="mt-1 whitespace-pre-wrap">{desc}</div>
+      {/* 안내 영역 */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 sm:p-6">
+        <div className="text-xs font-bold text-indigo-500 mb-2 tracking-wider">안내사항</div>
+        <div className="text-base sm:text-lg whitespace-pre-wrap text-gray-800 leading-relaxed">{desc}</div>
       </div>
 
-      <div className="bg-white rounded-2xl shadow p-4">
+      {/* 투표 폼 영역 */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 sm:p-6">
         {isClosed && (
-          <div className="mb-3 p-3 rounded-xl bg-rose-50 text-rose-700 text-sm border border-rose-100">
+          <div className="mb-5 p-4 rounded-xl bg-rose-50 text-rose-700 text-sm border border-rose-100 font-medium text-center">
             투표가 마감되어 더 이상 제출할 수 없습니다.
           </div>
         )}
 
         {!anonymous && (
-          <div className="mb-3">
-            <label className="text-sm text-gray-500">이름/번호</label>
+          <div className="mb-6">
+            <label className="block text-sm font-semibold text-gray-700 mb-2">이름 또는 번호</label>
             <input
               value={voterName}
               onChange={(e: React.ChangeEvent<HTMLInputElement>) => setVoterName(e.target.value)}
-              placeholder="이름 또는 번호"
-              className="mt-1 w-full border rounded-lg px-3 py-2"
-              disabled={isClosed || isWorking}
+              placeholder="여기에 입력하세요"
+              className="w-full border border-gray-300 rounded-xl px-4 py-3 sm:py-3 text-base outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-shadow bg-gray-50 focus:bg-white"
+              disabled={isClosed || isWorking || submitted}
             />
           </div>
         )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <div className="mb-3 flex items-center justify-between">
+          <label className="text-sm font-semibold text-gray-700">항목 선택 <span className="text-indigo-500 font-normal ml-1">({selected.length}/{voteLimit})</span></label>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
           {options.map((o: Option) => {
             const checked = selected.includes(o.id);
-            const disabled = isClosed || isWorking || (!checked && selected.length >= voteLimit);
+            const disabled = isClosed || isWorking || submitted || (!checked && selected.length >= voteLimit);
             return (
               <button
                 key={o.id}
                 onClick={() =>
                   setSelected((prev: string[]) => {
-                    if (isClosed || isWorking) return prev;
+                    if (isClosed || isWorking || submitted) return prev;
                     if (prev.includes(o.id)) return prev.filter((x: string) => x !== o.id);
                     if (prev.length >= voteLimit) return prev;
                     return [...prev, o.id];
                   })
                 }
-                className={`text-left p-3 rounded-xl border transition ${checked ? "bg-indigo-50 border-indigo-300" : "bg-white hover:bg-gray-50"} ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
+                className={`relative text-left p-4 sm:p-5 rounded-xl border-2 transition-all duration-200 
+                  ${checked 
+                    ? "bg-indigo-50 border-indigo-500 shadow-sm" 
+                    : "bg-white border-gray-200 hover:border-indigo-300 hover:bg-gray-50"} 
+                  ${disabled && !checked ? "opacity-50 cursor-not-allowed bg-gray-50" : ""}
+                  ${disabled && checked ? "cursor-default" : ""}
+                `}
                 disabled={disabled}
               >
-                <div className="font-medium">{o.label}</div>
-                <div className="text-xs text-gray-500">{checked ? "선택됨" : `선택 가능 (${selected.length}/${voteLimit})`}</div>
+                <div className={`font-semibold text-base sm:text-lg pr-6 ${checked ? "text-indigo-900" : "text-gray-800"}`}>
+                  {o.label}
+                </div>
+                {checked && (
+                  <div className="absolute top-1/2 -translate-y-1/2 right-4 text-indigo-500">
+                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                    </svg>
+                  </div>
+                )}
               </button>
             );
           })}
         </div>
 
-        <div className="mt-4 flex items-center justify-between">
-          <a href="#admin" className="text-xs text-gray-400 underline">관리자 화면</a>
+        <div className="mt-8 flex items-center justify-between pt-4 border-t border-gray-100">
+          <a href="#admin" className="text-xs text-gray-400 hover:text-gray-600 underline px-2 py-1">관리자 설정</a>
           <button
             onClick={onSubmit}
-            className="px-4 py-2 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
-            disabled={isClosed || !pidReady || isWorking}
-            title={!pidReady ? "방이 준비되는 중입니다…" : undefined}
+            className={`px-8 py-3.5 rounded-xl font-bold text-white shadow-sm transition-all
+              ${submitted 
+                ? "bg-gray-400 cursor-default" 
+                : "bg-emerald-600 hover:bg-emerald-700 hover:shadow-md active:transform active:scale-95"}
+              ${(isClosed || !pidReady || isWorking) && !submitted ? "opacity-50 cursor-not-allowed" : ""}
+            `}
+            disabled={isClosed || !pidReady || isWorking || submitted}
           >
-            제출
+            {submitted ? "제출 완료" : "투표 제출하기"}
           </button>
         </div>
 
-        {submitted && <div className="mt-3 text-sm text-emerald-700">제출되었습니다. 감사합니다!</div>}
+        {submitted && (
+          <div className="mt-4 p-4 bg-emerald-50 border border-emerald-100 rounded-xl text-center">
+            <p className="text-sm font-semibold text-emerald-800">✅ 투표가 성공적으로 제출되었습니다!</p>
+          </div>
+        )}
       </div>
 
-      <div className="bg-white rounded-2xl shadow p-4">
-        <div className="flex items-center justify-between">
-          <h2 className="font-semibold">결과</h2>
-          <div className="text-sm text-gray-500">총 {totalVotes}표</div>
+      {/* 결과 영역 (모바일에서 높이 최적화) */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 sm:p-6">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-lg font-bold text-gray-800">현재 결과</h2>
+          <div className="text-sm font-medium px-3 py-1 bg-gray-100 rounded-full text-gray-600">총 {totalVotes}표</div>
         </div>
-        <div className="w-full h-[320px]">
+        
+        {/* 모바일 250px, 태블릿/PC 320px 로 높이 반응형 */}
+        <div className="w-full h-[250px] sm:h-[320px]">
           {isVisible ? (
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={graphData} margin={{ top: 20, right: 20, bottom: 24, left: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.35} />
+              <BarChart data={graphData} margin={{ top: 20, right: 10, bottom: 20, left: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" opacity={0.35} vertical={false} />
                 <XAxis
                   dataKey="name"
                   interval={0}
-                  angle={-10}
+                  angle={-15}
                   textAnchor="end"
-                  height={48}
-                  tick={{ fontSize: 13, fontFamily: "Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif" }}
+                  height={40}
+                  tick={{ fontSize: 12, fill: '#6B7280', fontFamily: "Inter, system-ui, sans-serif" }}
+                  axisLine={false}
+                  tickLine={false}
                 />
                 <YAxis
                   allowDecimals={false}
-                  tick={{ fontSize: 13, fontFamily: "Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif" }}
+                  tick={{ fontSize: 12, fill: '#6B7280', fontFamily: "Inter, system-ui, sans-serif" }}
+                  axisLine={false}
+                  tickLine={false}
+                  width={30}
                 />
-                <Tooltip formatter={(v: number) => `${v} 표`} />
+                <Tooltip formatter={(v: number) => [`${v} 표`, '득표수']} cursor={{fill: '#F3F4F6'}} />
                 <Bar
                   dataKey="votes"
-                  radius={[10, 10, 0, 0]}
-                  barSize={32}
+                  radius={[6, 6, 0, 0]}
+                  barSize={40}
                   isAnimationActive
                   animationDuration={700}
                   animationEasing="ease-out"
@@ -1173,20 +1213,30 @@ function StudentView(props: StudentViewProps) {
                   <LabelList
                     dataKey="votes"
                     position="top"
-                    style={{ fontSize: 13, fontFamily: "Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif" }}
+                    style={{ fontSize: 12, fill: '#4B5563', fontWeight: 600, fontFamily: "Inter, system-ui, sans-serif" }}
                   />
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
           ) : (
-            <div className="h-full grid place-items-center text-gray-400">
+            <div className="h-full flex flex-col items-center justify-center text-gray-400 bg-gray-50 rounded-xl">
               {visibilityMode === "deadline" && deadlineAt ? (
                 <div className="text-center">
-                  <div>결과는 발표 전 비공개입니다.</div>
-                  <div className="text-xs mt-1">공개 예정: {new Date(deadlineAt).toLocaleString()}</div>
+                  <svg className="w-10 h-10 mx-auto mb-3 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div className="font-medium">결과는 마감 후 공개됩니다</div>
+                  <div className="text-xs mt-1.5 text-gray-400 border border-gray-200 inline-block px-2 py-1 rounded">
+                    공개 예정: {new Date(deadlineAt).toLocaleString()}
+                  </div>
                 </div>
               ) : (
-                <div>결과 비공개 상태입니다.</div>
+                <div className="text-center">
+                  <svg className="w-10 h-10 mx-auto mb-3 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                  </svg>
+                  <div className="font-medium">결과 비공개 상태입니다</div>
+                </div>
               )}
             </div>
           )}
