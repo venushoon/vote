@@ -334,7 +334,8 @@ export default function App() {
     }
   };
 
-  const debounceTimer = useRef<NodeJS.Timeout | null>(null);
+  // ✅ NodeJS.Timeout 대신 브라우저 환경에 맞는 ReturnType<typeof setTimeout> 사용
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const setOptionLabel = (id: string, label: string) => {
     setOptions((prev: Option[]) => {
       const next = prev.map((o: Option) => (o.id === id ? { ...o, label } : o));
