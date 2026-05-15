@@ -4,7 +4,7 @@ import {
   ResponsiveContainer, LabelList, Cell,
 } from "recharts";
 import QRCode from "react-qr-code";
-import { ref, onValue, set, update, runTransaction } from "firebase/database";
+import { ref, onValue, set, update, runTransaction, remove } from "firebase/database";
 import type { DataSnapshot } from "firebase/database";
 import { db, ensureAuth } from "./firebase";
 
@@ -17,7 +17,7 @@ type GraphDatum = { name: string; votes: number; _i: number };
 
 const DEFAULT_DESC = "설명을 입력하세요. 예) 체험학습 장소를 골라요!";
 const LS_PID_KEY = "vote_last_pid";
-const ADMIN_PIN = import.meta.env.VITE_ADMIN_PIN; // 환경변수에서 관리자 PIN 로드
+const ADMIN_PIN = import.meta.env.VITE_ADMIN_PIN;
 
 const uuid = () =>
   (window.crypto as any)?.randomUUID?.() ||
@@ -39,7 +39,7 @@ const defaultState = () => {
     { id: uuid(), label: "보기 2", votes: 0 },
   ];
   return {
-    title: "우리 반 결정 투표",
+    title: "새로운 결정 투표",
     desc: DEFAULT_DESC,
     voteLimit: 1 as VoteLimit,
     options: opts,
@@ -62,6 +62,12 @@ const COLORS = [
 
 /* ========= Interfaces ========= */
 interface AdminViewProps {
+  currentPid: string;
+  allPolls: Record<string, any>;
+  switchPoll: (pid: string) => void;
+  createNewPoll: () => Promise<void>;
+  deletePoll: (pid: string) => Promise<void>;
+  togglePollStatus: (pid: string, isClosed: boolean) => Promise<void>;
   desc: string;
   setDesc: (v: string) => Promise<void>;
   voteLimit: VoteLimit;
@@ -132,7 +138,9 @@ export default function App() {
   const [isBooting, setIsBooting] = useState(true);
   const [isWorking, setIsWorking] = useState(false);
 
+  // 투표 ID 상태 관리 (동적 변경 가능하도록 수정)
   const [pollId, setPollId] = useState<string>("");
+  const [allPolls, setAllPolls] = useState<Record<string, any>>({});
 
   const [title, setTitle] = useState("우리 반 결정 투표");
   const [desc, setDesc] = useState(DEFAULT_DESC);
@@ -159,92 +167,107 @@ export default function App() {
   }, []);
 
   /* ---------- pid helpers ---------- */
-  const getActivePid = useCallback((): string =>
-    pollId || getPidFromURL() || localStorage.getItem(LS_PID_KEY) || "", [pollId]);
-
-  const setPidEverywhere = (pid: string) => {
+  const setPidEverywhere = useCallback((pid: string) => {
     if (!pid) return;
     setPollId(pid);
     localStorage.setItem(LS_PID_KEY, pid);
     const u = new URL(location.href);
     u.searchParams.set("pid", pid);
     history.replaceState({}, "", u.toString());
+  }, []);
+
+  // [기능 추가] 전체 투표 목록 불러오기 (관리자 모드 전용)
+  useEffect(() => {
+    if (viewMode === "admin" && adminAuthed) {
+      const unsub = onValue(ref(db, "polls"), (snap) => {
+        setAllPolls(snap.val() || {});
+      });
+      return () => unsub();
+    }
+  }, [viewMode, adminAuthed]);
+
+  // 앱 부팅 시 투표 ID 초기화
+  useEffect(() => {
+    async function boot() {
+      await ensureAuth();
+      const initPid = getPidFromURL() || localStorage.getItem(LS_PID_KEY);
+      if (initPid) {
+        setPidEverywhere(initPid);
+      } else {
+        const newPid = Math.random().toString(36).slice(2, 8);
+        await set(ref(db, pollPath(newPid)), defaultState());
+        setPidEverywhere(newPid);
+      }
+    }
+    boot();
+  }, [setPidEverywhere]);
+
+  // 현재 투표 데이터 실시간 구독
+  useEffect(() => {
+    if (!pollId) return;
+    const unsub = onValue(
+      ref(db, pollPath(pollId)),
+      (snap: DataSnapshot) => {
+        const data = snap.val();
+        if (!data) return; // 삭제되었거나 없는 경우 무시
+        setTitle(data.title ?? "우리 반 결정 투표");
+        setDesc(data.desc ?? DEFAULT_DESC);
+        setVoteLimit((data.voteLimit as VoteLimit) ?? 1);
+        setOptions(Array.isArray(data.options) ? data.options : []);
+        setBallots(data.ballots ?? {});
+        setAnonymous(!!data.anonymous);
+        setVisibilityMode((data.visibilityMode as Visibility) ?? "always");
+        setDeadlineAt(data.deadlineAt ?? null);
+        const ev = Number(data.expectedVoters ?? 0);
+        const evSafe = isNaN(ev) ? 0 : ev;
+        setExpectedVoters(evSafe);
+        setExpectedVotersText(String(evSafe));
+        setManualClosed(!!data.manualClosed);
+        setIsBooting(false);
+      },
+      (err) => {
+        console.error("구독 실패:", err);
+        setIsBooting(false);
+      }
+    );
+    return () => unsub();
+  }, [pollId]);
+
+  /* ---------- Dashboard Control Functions ---------- */
+  const createNewPoll = async () => {
+    setIsWorking(true);
+    const newPid = Math.random().toString(36).slice(2, 8);
+    await set(ref(db, pollPath(newPid)), defaultState());
+    setPidEverywhere(newPid);
+    setLinkVersion((v) => v + 1);
+    setIsWorking(false);
   };
 
-  const ensurePid = async (): Promise<string> => {
-    await ensureAuth();
-    let pid = getActivePid();
-    if (pid) return pid;
+  const switchPoll = (pid: string) => {
+    setPidEverywhere(pid);
+    setLinkVersion((v) => v + 1);
+  };
+
+  const deletePoll = async (pid: string) => {
+    if (!confirm("정말 이 투표를 완전히 삭제하시겠습니까?\n(데이터 복구 불가)")) return;
     setIsWorking(true);
-    try {
-      pid = Math.random().toString(36).slice(2, 8);
-      await set(ref(db, pollPath(pid)), defaultState());
-      setPidEverywhere(pid);
-      setLinkVersion((v) => v + 1);
-      return pid;
-    } finally {
-      setIsWorking(false);
+    await remove(ref(db, pollPath(pid)));
+    // 만약 삭제한 투표가 현재 보고 있는 투표라면 새 투표 생성
+    if (pid === pollId) {
+      await createNewPoll();
     }
+    setIsWorking(false);
+  };
+
+  const togglePollStatus = async (pid: string, isClosed: boolean) => {
+    await update(ref(db, pollPath(pid)), { manualClosed: !isClosed, updatedAt: Date.now() });
   };
 
   const patchPoll = async (fields: Partial<any>) => {
+    if (!pollId) return;
     await ensureAuth();
-    const pid = getActivePid();
-    if (!pid) return;
-    await update(ref(db, pollPath(pid)), { ...fields, updatedAt: Date.now() });
+    await update(ref(db, pollPath(pollId)), { ...fields, updatedAt: Date.now() });
   };
-
-  /* ---------- boot & subscribe ---------- */
-  useEffect(() => {
-    let unsub: (() => void) | undefined;
-
-    async function boot() {
-      try {
-        await ensureAuth();
-        let pid = getPidFromURL() || localStorage.getItem(LS_PID_KEY) || "";
-        if (!pid) {
-          pid = Math.random().toString(36).slice(2, 8);
-          await set(ref(db, pollPath(pid)), defaultState());
-        }
-        setPidEverywhere(pid);
-
-        const r = ref(db, pollPath(pid));
-        unsub = onValue(
-          r,
-          (snap: DataSnapshot) => {
-            const data = snap.val();
-            if (!data) return;
-            setTitle(data.title ?? "우리 반 결정 투표");
-            setDesc(data.desc ?? DEFAULT_DESC);
-            setVoteLimit((data.voteLimit as VoteLimit) ?? 1);
-            setOptions(Array.isArray(data.options) ? data.options : []);
-            setBallots(data.ballots ?? {});
-            setAnonymous(!!data.anonymous);
-            setVisibilityMode((data.visibilityMode as Visibility) ?? "always");
-            setDeadlineAt(data.deadlineAt ?? null);
-            const ev = Number(data.expectedVoters ?? 0);
-            const evSafe = isNaN(ev) ? 0 : ev;
-            setExpectedVoters(evSafe);
-            setExpectedVotersText(String(evSafe));
-            setManualClosed(!!data.manualClosed);
-            setPidEverywhere(pid);
-            setIsBooting(false);
-          },
-          (err) => {
-            console.error("구독 실패:", err);
-            setIsBooting(false);
-          }
-        );
-      } catch (e) {
-        console.error("초기화 실패", e);
-        setOptions(defaultState().options);
-        setIsBooting(false);
-      }
-    }
-
-    boot();
-    return () => { if (unsub) unsub(); };
-  }, []);
 
   /* ---------- derived ---------- */
   const totalVotes = useMemo(
@@ -275,24 +298,25 @@ export default function App() {
 
   /* ---------- student link / QR ---------- */
   const studentLink = useMemo(() => {
-    const pid = getActivePid();
     const u = new URL(location.href);
-    if (pid) u.searchParams.set("pid", pid);
+    if (pollId) u.searchParams.set("pid", pollId);
     u.hash = "#student";
     u.searchParams.set("v", String(linkVersion));
     return u.toString();
-  }, [getActivePid, linkVersion]);
+  }, [pollId, linkVersion]);
 
   const copyStudentLink = () =>
-    navigator.clipboard.writeText(studentLink).then(() => setSaveHint("학생용 링크를 복사했어요."));
+    navigator.clipboard.writeText(studentLink).then(() => {
+      setSaveHint("학생용 링크를 복사했어요.");
+      setTimeout(() => setSaveHint(""), 3000);
+    });
 
   /* ---------- save / mutate ---------- */
   const saveToCloud = async () => {
     try {
       setIsWorking(true);
       await ensureAuth();
-      const pid = await ensurePid();
-      await update(ref(db, pollPath(pid)), {
+      await update(ref(db, pollPath(pollId)), {
         title, desc, voteLimit, options, anonymous,
         visibilityMode, deadlineAt, expectedVoters, manualClosed,
         updatedAt: Date.now(),
@@ -312,9 +336,7 @@ export default function App() {
     try {
       setIsWorking(true);
       await ensureAuth();
-      const pid = await ensurePid();
-
-      await runTransaction(ref(db, pollPath(pid)), (data: any) => {
+      await runTransaction(ref(db, pollPath(pollId)), (data: any) => {
         const d = data || defaultState();
         const current: Option[] = Array.isArray(d.options) ? d.options : [];
         const nextIndex = current.length + 1;
@@ -322,7 +344,6 @@ export default function App() {
         const next: Option[] = [...current, newItem];
         return { ...d, options: next, updatedAt: Date.now() };
       });
-
       setSaveHint("옵션을 추가했어요.");
       setLinkVersion((v) => v + 1);
     } catch (e) {
@@ -337,12 +358,10 @@ export default function App() {
   const setOptionLabel = (id: string, label: string) => {
     setOptions((prev: Option[]) => {
       const next = prev.map((o: Option) => (o.id === id ? { ...o, label } : o));
-      
       if (debounceTimer.current) clearTimeout(debounceTimer.current);
       debounceTimer.current = setTimeout(() => {
         void patchPoll({ options: next });
       }, 500); 
-
       return next;
     });
   };
@@ -351,9 +370,7 @@ export default function App() {
     try {
       setIsWorking(true);
       await ensureAuth();
-      const pid = await ensurePid();
-
-      await runTransaction(ref(db, pollPath(pid)), (data: any) => {
+      await runTransaction(ref(db, pollPath(pollId)), (data: any) => {
         if (!data) return data;
         const current: Option[] = Array.isArray(data.options) ? data.options : [];
         const next: Option[] = current.filter((o: Option) => o.id !== id);
@@ -374,7 +391,6 @@ export default function App() {
         const fixedOptions: Option[] = next.map((o: Option) => ({ ...o, votes: countMap[o.id] || 0 }));
         return { ...data, options: fixedOptions, ballots: newBallots, updatedAt: Date.now() };
       });
-
       setSaveHint("옵션을 삭제했어요.");
       setLinkVersion((v) => v + 1);
     } catch (e) {
@@ -389,8 +405,7 @@ export default function App() {
     try {
       setIsWorking(true);
       await ensureAuth();
-      const pid = await ensurePid();
-      await runTransaction(ref(db, pollPath(pid)), (data: any) => {
+      await runTransaction(ref(db, pollPath(pollId)), (data: any) => {
         if (!data) return data;
         const opts: Option[] = data.options || [];
         const ballotsObj = data.ballots || {};
@@ -432,19 +447,15 @@ export default function App() {
     try {
       setIsWorking(true);
       await ensureAuth();
-      const pid = await ensurePid();
-
-      const key = getStudentKey(pid, anonymous);
+      const key = getStudentKey(pollId, anonymous);
       if (!key) { alert("이름/번호를 입력하세요."); return false; }
       if (selected.length === 0) { alert("선택한 보기가 없습니다."); return false; }
 
-      const res = await runTransaction(ref(db, pollPath(pid)), (data: any) => {
+      const res = await runTransaction(ref(db, pollPath(pollId)), (data: any) => {
         if (!data) return data;
-        
         if (data.manualClosed || (data.expectedVoters > 0 && Object.keys(data.ballots || {}).length >= data.expectedVoters)) {
           return; 
         }
-
         const ballotsObj = data.ballots || {};
         if (ballotsObj[key]) return data; 
 
@@ -489,9 +500,7 @@ export default function App() {
       if (!confirm(`${id}의 투표를 삭제할까요?`)) return;
       setIsWorking(true);
       await ensureAuth();
-      const pid = await ensurePid();
-
-      await runTransaction(ref(db, pollPath(pid)), (data: any) => {
+      await runTransaction(ref(db, pollPath(pollId)), (data: any) => {
         if (!data) return data;
         const ballotsObj = { ...(data.ballots || {}) };
         const info = ballotsObj[id] as Ballot | undefined;
@@ -517,27 +526,10 @@ export default function App() {
   /* ---------- reset to defaults ---------- */
   const resetAllToDefaults = async () => {
     try {
-      if (!confirm("모든 설정과 결과를 기본값으로 초기화할까요?")) return;
+      if (!confirm("현재 방의 모든 설정과 결과를 기본값으로 초기화할까요?")) return;
       setIsWorking(true);
       await ensureAuth();
-      const pid = await ensurePid();
-      await set(ref(db, pollPath(pid)), defaultState());
-
-      const d = defaultState();
-      setTitle(d.title);
-      setDesc(d.desc);
-      setVoteLimit(d.voteLimit);
-      setOptions(d.options);
-      setBallots(d.ballots);
-      setAnonymous(d.anonymous);
-      setVisibilityMode(d.visibilityMode);
-      setDeadlineAt(d.deadlineAt);
-      setExpectedVoters(d.expectedVoters);
-      setExpectedVotersText(String(d.expectedVoters));
-      setManualClosed(d.manualClosed);
-
-      setPidEverywhere(pid);
-      setLinkVersion((v) => v + 1);
+      await set(ref(db, pollPath(pollId)), defaultState());
       setSaveHint("기본값으로 초기화됨");
     } catch (e) {
       console.error(e);
@@ -550,13 +542,11 @@ export default function App() {
   /* ---------- close / reopen ---------- */
   const closeNow = async () => {
     await ensureAuth();
-    const pid = await ensurePid();
-    await update(ref(db, pollPath(pid)), { manualClosed: true, updatedAt: Date.now() });
+    await update(ref(db, pollPath(pollId)), { manualClosed: true, updatedAt: Date.now() });
   };
   const reopen = async () => {
     await ensureAuth();
-    const pid = await ensurePid();
-    await update(ref(db, pollPath(pid)), { manualClosed: false, updatedAt: Date.now() });
+    await update(ref(db, pollPath(pollId)), { manualClosed: false, updatedAt: Date.now() });
   };
 
   /* ---------- JSON / CSV / load ---------- */
@@ -573,7 +563,7 @@ export default function App() {
       {
         title, desc, voteLimit, options, ballots,
         anonymous, visibilityMode, deadlineAt,
-        expectedVoters, manualClosed, pollId: getActivePid(),
+        expectedVoters, manualClosed, pollId: pollId,
       },
       null, 2
     );
@@ -635,13 +625,13 @@ export default function App() {
     e.target.value = "";
   };
 
-  if (isBooting) {
-    return <div className="min-h-screen grid place-items-center text-gray-500">초기화 중입니다…</div>;
+  if (isBooting || !pollId) {
+    return <div className="min-h-screen grid place-items-center text-gray-500 font-sans">초기화 중입니다…</div>;
   }
 
   if (viewMode === "admin" && !adminAuthed) {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-white to-gray-50 flex items-center justify-center px-4">
+      <div className="min-h-screen bg-gradient-to-b from-white to-gray-50 flex items-center justify-center px-4 font-sans">
         <form 
           onSubmit={(e) => {
             e.preventDefault();
@@ -670,16 +660,14 @@ export default function App() {
     );
   }
 
-  const pidReady = !!getActivePid();
-
   return (
     <div className="min-h-screen bg-[#F9FAFB] text-gray-900 flex flex-col font-sans selection:bg-indigo-100 selection:text-indigo-900">
       {/* 상단바 */}
       <header className="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-gray-200/80 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3.5 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3.5">
+          <div className="flex items-center gap-3.5 w-full">
             <div className="h-10 w-10 shrink-0 rounded-2xl bg-gradient-to-br from-indigo-500 to-indigo-600 text-white grid place-items-center font-bold shadow-sm">V</div>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               {viewMode === "admin" ? (
                 <input
                   className="text-lg sm:text-xl font-bold text-gray-900 bg-transparent border-b border-transparent focus:border-indigo-400 outline-none px-1 rounded w-full truncate placeholder-gray-300"
@@ -706,7 +694,7 @@ export default function App() {
               <input ref={fileInputRef} type="file" accept="application/json" className="hidden" onChange={loadFromFile} />
             </div>
           ) : (
-            <div className="text-xs font-semibold tracking-wide text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-full shrink-0 border border-indigo-100">학생 화면</div>
+            <div className="text-xs font-semibold tracking-wide text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-full shrink-0 border border-indigo-100 hidden sm:block">학생 화면</div>
           )}
         </div>
 
@@ -732,6 +720,12 @@ export default function App() {
         {viewMode === "admin" ? (
           <AdminView
             {...{
+              currentPid: pollId,
+              allPolls,
+              switchPoll,
+              createNewPoll,
+              deletePoll,
+              togglePollStatus,
               desc,
               setDesc: async (v: string) => { setDesc(v); await patchPoll({ desc: v }); },
               voteLimit,
@@ -769,19 +763,21 @@ export default function App() {
               visibilityMode, deadlineAt, isVisible: isVisibleStudent,
               voterName, setVoterName, selected, setSelected, submitVote,
               totalVotes, graphData, isClosed,
-              pidReady: !!getActivePid(),
+              pidReady: !!pollId,
               isWorking,
             }}
           />
         )}
       </div>
 
-      <footer className="w-full bg-white border-t border-gray-200 py-6 mt-auto">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 text-xs text-gray-400 flex flex-col sm:flex-row justify-between items-center gap-3">
-          <span className="flex items-center gap-2">방 ID: <span className="font-mono bg-gray-100 px-2 py-1 rounded-md text-gray-600 font-semibold tracking-wider">{getActivePid()}</span></span>
-          <span className="font-medium">Made for classroom by 교무</span>
-        </div>
-      </footer>
+      {viewMode === "admin" && (
+        <footer className="w-full bg-white border-t border-gray-200 py-6 mt-auto">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 text-xs text-gray-400 flex flex-col sm:flex-row justify-between items-center gap-3">
+            <span className="flex items-center gap-2">현재 방 ID: <span className="font-mono bg-gray-100 px-2 py-1 rounded-md text-gray-600 font-semibold tracking-wider">{pollId}</span></span>
+            <span className="font-medium">Made for classroom by 교무</span>
+          </div>
+        </footer>
+      )}
     </div>
   );
 }
@@ -789,6 +785,7 @@ export default function App() {
 /* ========= Admin View ========= */
 function AdminView(props: AdminViewProps) {
   const {
+    currentPid, allPolls, switchPoll, createNewPoll, deletePoll, togglePollStatus,
     desc, setDesc,
     voteLimit, setVoteLimit,
     options, setOptionLabel, addOption, removeOption, recountVotes,
@@ -805,10 +802,18 @@ function AdminView(props: AdminViewProps) {
     isWorking,
   } = props;
 
-  const [activeTab, setActiveTab] = useState<'settings' | 'results' | 'voters' | 'link'>('settings');
+  // 기본 탭을 'list' (투표 목록)으로 변경
+  const [activeTab, setActiveTab] = useState<'list' | 'settings' | 'results' | 'voters' | 'link'>('list');
 
   const votedCount = Object.keys(ballots || {}).length;
   const ballotEntries: Array<[string, Ballot]> = Object.entries(ballots || {}) as any;
+
+  // 생성일 기준 내림차순(최신순)으로 투표 목록 정렬
+  const allPollsArray = useMemo(() => {
+    return Object.entries(allPolls)
+      .map(([pid, data]) => ({ pid, ...data }))
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  }, [allPolls]);
 
   const getTabClass = (tabId: string) => {
     const isActive = activeTab === tabId;
@@ -822,14 +827,24 @@ function AdminView(props: AdminViewProps) {
   return (
     <div className="flex flex-col md:flex-row gap-6 p-4 sm:p-6 w-full">
       {/* 사이드바 메뉴 */}
-      <aside className="w-full md:w-64 shrink-0 md:sticky top-[100px] self-start">
+      <aside className="w-full md:w-56 shrink-0 md:sticky top-[100px] self-start z-10">
         <nav className="flex md:flex-col gap-2 overflow-x-auto pb-2 md:pb-0 hide-scrollbar scroll-smooth">
+          {/* 전체 투표 목록 탭 (신설) */}
+          <button onClick={() => setActiveTab('list')} className={getTabClass('list')}>
+            <svg fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
+            </svg>
+            전체 투표 목록
+          </button>
+          
+          <div className="hidden md:block my-2 border-t border-gray-200/60 mx-2"></div>
+
           <button onClick={() => setActiveTab('settings')} className={getTabClass('settings')}>
             <svg fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
               <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
               <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
-            투표 설정
+            현재 투표 설정
           </button>
           <button onClick={() => setActiveTab('results')} className={getTabClass('results')}>
             <svg fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
@@ -854,12 +869,101 @@ function AdminView(props: AdminViewProps) {
 
       {/* 메인 컨텐츠 영역 */}
       <main className="flex-1 min-w-0 pb-12">
+
+        {/* 0. 투표 목록 화면 (새로 추가됨) */}
+        {activeTab === 'list' && (
+          <div className="space-y-6 max-w-4xl animate-fadeIn">
+            <div className="bg-white rounded-3xl shadow-[0_2px_10px_rgb(0,0,0,0.02)] border border-gray-100 p-6 sm:p-8">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-8 gap-4 border-b border-gray-100 pb-6">
+                <div>
+                  <h2 className="text-2xl font-bold text-gray-800">모든 투표 목록</h2>
+                  <p className="text-sm text-gray-500 mt-1">총 {allPollsArray.length}개의 투표 방이 있습니다.</p>
+                </div>
+                <button 
+                  onClick={async () => {
+                    await createNewPoll();
+                    setActiveTab('settings');
+                  }} 
+                  className="px-5 py-3 text-sm font-bold rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 shadow-md transition-all active:scale-95 flex items-center justify-center gap-2"
+                  disabled={isWorking}
+                >
+                  <svg fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-5 h-5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                  </svg>
+                  새 투표 방 만들기
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {allPollsArray.map((pollData: any) => {
+                  const p_votedCount = Object.keys(pollData.ballots || {}).length;
+                  const p_expected = Number(pollData.expectedVoters || 0);
+                  const p_autoClosed = p_expected > 0 && p_votedCount >= p_expected;
+                  const p_isClosed = pollData.manualClosed || p_autoClosed;
+                  const isActive = currentPid === pollData.pid;
+
+                  return (
+                    <div key={pollData.pid} className={`p-5 rounded-2xl border-2 transition-all group ${isActive ? 'border-indigo-500 bg-indigo-50/30 shadow-sm' : 'border-gray-200 hover:border-indigo-300 hover:shadow-md bg-white'}`}>
+                      <div className="flex items-start justify-between mb-3 gap-2">
+                        <div className="min-w-0">
+                          <h3 className="font-bold text-lg text-gray-800 truncate" title={pollData.title || "제목 없음"}>
+                            {pollData.title || "제목 없음"}
+                          </h3>
+                          <div className="text-xs text-gray-400 font-mono mt-1">ID: {pollData.pid}</div>
+                        </div>
+                        {p_isClosed ? (
+                          <span className="shrink-0 px-2.5 py-1 rounded-lg bg-rose-50 text-rose-600 border border-rose-200 text-xs font-bold">마감됨</span>
+                        ) : (
+                          <span className="shrink-0 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-200 text-xs font-bold">진행중</span>
+                        )}
+                      </div>
+                      
+                      <div className="flex items-center gap-4 text-sm text-gray-600 mb-5">
+                        <div className="flex items-center gap-1.5">
+                          <svg fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 text-gray-400"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" /></svg>
+                          <span className="font-semibold">{p_votedCount}명 참여</span>
+                        </div>
+                        <div className="text-xs text-gray-400">
+                          {pollData.createdAt ? new Date(pollData.createdAt).toLocaleDateString() : '날짜 없음'}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 pt-4 border-t border-gray-100">
+                        <button 
+                          onClick={() => {
+                            switchPoll(pollData.pid);
+                            setActiveTab('settings');
+                          }}
+                          className={`flex-1 py-2 text-sm font-bold rounded-xl transition ${isActive ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-indigo-50 hover:text-indigo-700'}`}
+                        >
+                          {isActive ? '현재 관리중' : '관리(입장)'}
+                        </button>
+                        <button 
+                          onClick={() => togglePollStatus(pollData.pid, pollData.manualClosed)}
+                          className="px-3 py-2 text-sm font-semibold rounded-xl bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 transition"
+                        >
+                          {pollData.manualClosed ? '재개' : '마감'}
+                        </button>
+                        <button 
+                          onClick={() => deletePoll(pollData.pid)}
+                          className="px-3 py-2 text-sm font-semibold rounded-xl bg-white border border-rose-100 text-rose-500 hover:bg-rose-50 transition"
+                        >
+                          삭제
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
         
         {/* 1. 투표 설정 화면 */}
         {activeTab === 'settings' && (
           <div className="space-y-6 max-w-3xl animate-fadeIn">
             <div className="bg-white rounded-3xl shadow-[0_2px_10px_rgb(0,0,0,0.02)] border border-gray-100 p-6 sm:p-8">
-              <h2 className="text-xl font-bold text-gray-800 mb-5">기본 설정</h2>
+              <h2 className="text-xl font-bold text-gray-800 mb-5">현재 방 기본 설정</h2>
               <label className="text-sm font-semibold text-gray-700 block mb-2">투표 설명 안내문</label>
               <textarea
                 value={desc}
@@ -946,9 +1050,9 @@ function AdminView(props: AdminViewProps) {
                 <div className="flex items-center gap-3">
                   {saveHint && <span className="text-sm text-emerald-600 font-bold bg-emerald-50 px-3 py-1.5 rounded-lg animate-pulse">{saveHint}</span>}
                   {!isClosed ? (
-                    <button onClick={closeNow} className="px-5 py-2.5 text-sm font-bold rounded-xl bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100 hover:text-rose-700 transition-colors shadow-sm" disabled={isWorking}>수동 마감하기</button>
+                    <button onClick={closeNow} className="px-5 py-2.5 text-sm font-bold rounded-xl bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100 hover:text-rose-700 transition-colors shadow-sm" disabled={isWorking}>방 수동 마감</button>
                   ) : (
-                    <button onClick={reopen} className="px-5 py-2.5 text-sm font-bold rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-200 hover:bg-emerald-100 hover:text-emerald-700 transition-colors shadow-sm" disabled={isWorking}>투표 재개하기</button>
+                    <button onClick={reopen} className="px-5 py-2.5 text-sm font-bold rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-200 hover:bg-emerald-100 hover:text-emerald-700 transition-colors shadow-sm" disabled={isWorking}>방 투표 재개</button>
                   )}
                 </div>
               </div>
@@ -990,8 +1094,8 @@ function AdminView(props: AdminViewProps) {
               </ul>
               
               <div className="mt-8 pt-5 border-t border-gray-100 flex items-center justify-between">
-                <button onClick={resetAllToDefaults} className="px-5 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold text-sm transition-colors" disabled={isWorking}>전체 초기화 (위험)</button>
-                <button onClick={recountVotes} className="px-5 py-2.5 rounded-xl bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 font-bold text-sm shadow-sm transition-colors" disabled={isWorking}>투표수 재계산</button>
+                <button onClick={resetAllToDefaults} className="px-5 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold text-sm transition-colors" disabled={isWorking}>전체 데이터 초기화 (위험)</button>
+                <button onClick={recountVotes} className="px-5 py-2.5 rounded-xl bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 font-bold text-sm shadow-sm transition-colors" disabled={isWorking}>투표수 갱신</button>
               </div>
             </div>
           </div>
@@ -1059,17 +1163,6 @@ function AdminView(props: AdminViewProps) {
                 )}
               </div>
             </div>
-
-            <div className="bg-indigo-50/50 rounded-3xl border border-indigo-100 p-6 sm:p-8">
-              <h3 className="font-extrabold text-indigo-900 flex items-center gap-2 mb-4">
-                <span className="text-2xl">💡</span> 원활한 진행을 위한 팁
-              </h3>
-              <ul className="list-disc pl-6 text-sm sm:text-base space-y-2.5 text-indigo-900/80 font-medium">
-                <li>공유 링크의 <code className="bg-white px-1.5 py-0.5 rounded-md shadow-sm text-indigo-600">?pid=방ID</code>가 동일하다면, 어떤 기기에서 투표하든 이 화면에 실시간으로 합산됩니다.</li>
-                <li>새로고침을 하더라도 서버 데이터를 다시 불러와 기존 투표 누계가 안전하게 유지됩니다.</li>
-                <li>설정 탭에서 <span className="font-bold text-rose-600">전체 초기화 (위험)</span> 버튼을 눌러야만 투표 데이터가 0으로 리셋됩니다.</li>
-              </ul>
-            </div>
           </div>
         )}
 
@@ -1078,7 +1171,7 @@ function AdminView(props: AdminViewProps) {
           <div className="space-y-6 max-w-3xl animate-fadeIn">
             <div className="bg-white rounded-3xl shadow-[0_2px_10px_rgb(0,0,0,0.02)] border border-gray-100 p-6 sm:p-8">
               <div className="flex items-center justify-between mb-6 border-b border-gray-100 pb-5">
-                <h2 className="text-xl font-bold text-gray-800">투표자 상세 목록</h2>
+                <h2 className="text-xl font-bold text-gray-800">방 투표자 상세 목록</h2>
                 <span className="text-sm font-bold px-4 py-1.5 bg-gray-100 rounded-xl text-gray-700">총 {ballotEntries.length}명 참여</span>
               </div>
               
@@ -1127,7 +1220,7 @@ function AdminView(props: AdminViewProps) {
                   <QRCode value={studentLink} size={220} className="w-full max-w-[220px] h-auto" />
                 </div>
                 <p className="text-base text-gray-600 font-bold text-center leading-relaxed">
-                  학생들이 스마트폰 카메라로 QR코드를 스캔하면<br/>즉시 투표 화면으로 이동합니다.
+                  학생들이 스마트폰 카메라로 QR코드를 스캔하면<br/>즉시 이 방의 투표 화면으로 이동합니다.
                 </p>
               </div>
 
@@ -1163,7 +1256,7 @@ function AdminView(props: AdminViewProps) {
   );
 }
 
-/* ========= Student View (Redesigned for Mobile/Tablet) ========= */
+/* ========= Student View (Redesigned & Hide Admin Link) ========= */
 function StudentView(props: StudentViewProps) {
   const {
     desc, options, voteLimit, anonymous,
@@ -1179,7 +1272,6 @@ function StudentView(props: StudentViewProps) {
     const success = await submitVote(); 
     if (success) {
       setSubmitted(true); 
-      // 제출 완료 후 상단으로 부드럽게 스크롤
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
@@ -1270,7 +1362,6 @@ function StudentView(props: StudentViewProps) {
                       {o.label}
                     </span>
                     
-                    {/* 체크박스 UI (선택 여부에 따라 디자인 변경) */}
                     <div className={`w-7 h-7 shrink-0 rounded-full border-2 flex items-center justify-center transition-colors duration-300
                       ${checked ? "bg-indigo-600 border-indigo-600 text-white" : "border-gray-300 group-hover:border-indigo-400"}
                     `}>
@@ -1286,6 +1377,7 @@ function StudentView(props: StudentViewProps) {
             </div>
 
             <div className="mt-10 flex justify-center">
+              {/* 관리자 링크 완전 제거됨 */}
               <button
                 onClick={onSubmit}
                 className={`w-full sm:w-auto min-w-[200px] px-10 py-4.5 rounded-2xl font-bold text-lg text-white shadow-lg transition-all duration-300
@@ -1300,14 +1392,13 @@ function StudentView(props: StudentViewProps) {
         )}
       </div>
 
-      {/* 결과 영역 (모바일/태블릿 최적화) */}
+      {/* 결과 영역 (관리자 설정에 따라 숨김/공개 연동) */}
       <div className="bg-white rounded-[2rem] shadow-sm border border-gray-100 p-6 sm:p-8">
         <div className="flex items-center justify-between mb-8">
           <h2 className="text-xl font-extrabold text-gray-800">현재 결과</h2>
-          <div className="text-sm font-bold px-4 py-2 bg-gray-100 rounded-xl text-gray-600">총 {totalVotes}표</div>
+          {isVisible && <div className="text-sm font-bold px-4 py-2 bg-gray-100 rounded-xl text-gray-600">총 {totalVotes}표</div>}
         </div>
         
-        {/* 모바일 280px, 태블릿/PC 350px 로 높이 반응형 */}
         <div className="w-full h-[280px] sm:h-[350px]">
           {isVisible ? (
             <ResponsiveContainer width="100%" height="100%">
@@ -1376,7 +1467,7 @@ function StudentView(props: StudentViewProps) {
                     </svg>
                   </div>
                   <div className="font-extrabold text-lg text-gray-700">현재 결과 비공개 상태입니다</div>
-                  <p className="mt-2 text-sm font-medium text-gray-500">관리자(선생님) 설정에 의해 숨김 처리되었습니다.</p>
+                  <p className="mt-2 text-sm font-medium text-gray-500">선생님(관리자) 설정에 의해 결과가 숨겨져 있습니다.</p>
                 </>
               )}
             </div>
