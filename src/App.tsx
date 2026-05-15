@@ -751,7 +751,7 @@ export default function App() {
               <h2 className="text-2xl font-bold text-indigo-200">실시간 결과 (총 {totalVotes}표)</h2>
             </div>
             <div className="flex-1 w-full min-h-0">
-              {isVisible ? (
+              {isVisibleAdmin ? ( // 💡 여기서 isVisible 대신 isVisibleAdmin으로 수정했습니다!
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={graphData} margin={{ top: 30, right: 10, bottom: 30, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" opacity={0.1} vertical={false} stroke="#FFFFFF" />
@@ -805,6 +805,7 @@ export default function App() {
       </div>
     );
   }
+  /* ============================================== */
 
   return (
     <div className="min-h-screen bg-[#F9FAFB] text-gray-900 flex flex-col font-sans selection:bg-indigo-100 selection:text-indigo-900">
