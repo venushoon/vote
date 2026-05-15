@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
   ResponsiveContainer, LabelList, Cell,
@@ -17,6 +17,7 @@ type GraphDatum = { name: string; votes: number; _i: number };
 
 const DEFAULT_DESC = "설명을 입력하세요. 예) 체험학습 장소를 골라요!";
 const LS_PID_KEY = "vote_last_pid";
+const ADMIN_PIN = import.meta.env.VITE_ADMIN_PIN; // 환경변수에서 관리자 PIN 로드
 
 const uuid = () =>
   (window.crypto as any)?.randomUUID?.() ||
@@ -55,21 +56,73 @@ const defaultState = () => {
 
 /* ========= Color palette for bars ========= */
 const COLORS = [
-  "#6366F1", // indigo-500
-  "#10B981", // emerald-500
-  "#F59E0B", // amber-500
-  "#EF4444", // red-500
-  "#06B6D4", // cyan-500
-  "#A855F7", // violet-500
-  "#84CC16", // lime-500
-  "#3B82F6", // blue-500
-  "#EC4899", // pink-500
-  "#F97316", // orange-500
+  "#6366F1", "#10B981", "#F59E0B", "#EF4444", "#06B6D4",
+  "#A855F7", "#84CC16", "#3B82F6", "#EC4899", "#F97316",
 ];
+
+/* ========= Interfaces ========= */
+interface AdminViewProps {
+  desc: string;
+  setDesc: (v: string) => Promise<void>;
+  voteLimit: VoteLimit;
+  setVoteLimit: (v: VoteLimit) => Promise<void>;
+  options: Option[];
+  setOptionLabel: (id: string, label: string) => void;
+  addOption: () => Promise<void>;
+  removeOption: (id: string) => Promise<void>;
+  recountVotes: () => Promise<void>;
+  ballots: Record<string, Ballot>;
+  anonymous: boolean;
+  setAnonymous: (b: boolean) => Promise<void>;
+  visibilityMode: Visibility;
+  setVisibilityMode: (m: Visibility) => Promise<void>;
+  deadlineAt: number | null;
+  setDeadlineAt: (t: number | null) => Promise<void>;
+  totalVotes: number;
+  graphData: GraphDatum[];
+  isVisible: boolean;
+  expectedVotersText: string;
+  onExpectedChange: (e: React.ChangeEvent<HTMLInputElement>) => Promise<void>;
+  isClosed: boolean;
+  closeNow: () => Promise<void>;
+  reopen: () => Promise<void>;
+  saveHint: string;
+  saveToCloud: () => Promise<void>;
+  studentLink: string;
+  copyStudentLink: () => void;
+  showLink: boolean;
+  setShowLink: React.Dispatch<React.SetStateAction<boolean>>;
+  resetAllToDefaults: () => Promise<void>;
+  removeVoter: (id: string) => Promise<void>;
+  isWorking: boolean;
+}
+
+interface StudentViewProps {
+  desc: string;
+  options: Option[];
+  voteLimit: VoteLimit;
+  anonymous: boolean;
+  visibilityMode: Visibility;
+  deadlineAt: number | null;
+  isVisible: boolean;
+  voterName: string;
+  setVoterName: (v: string) => void;
+  selected: string[];
+  setSelected: React.Dispatch<React.SetStateAction<string[]>>;
+  submitVote: () => Promise<boolean>;
+  totalVotes: number;
+  graphData: GraphDatum[];
+  isClosed: boolean;
+  pidReady: boolean;
+  isWorking: boolean;
+}
 
 /* ========= App ========= */
 export default function App() {
   const [viewMode, setViewMode] = useState<"admin" | "student">(getView());
+  const [adminAuthed, setAdminAuthed] = useState(!ADMIN_PIN); // PIN이 설정 안되어 있으면 기본 패스 (보안상 설정 권장)
+  const [pinInput, setPinInput] = useState("");
+
   useEffect(() => {
     const onHash = () => setViewMode(getView());
     window.addEventListener("hashchange", onHash);
@@ -98,9 +151,16 @@ export default function App() {
   const [showLink, setShowLink] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  /* ---------- Timer for real-time deadline check ---------- */
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 10000); // 10초 주기 갱신
+    return () => clearInterval(timer);
+  }, []);
+
   /* ---------- pid helpers ---------- */
-  const getActivePid = (): string =>
-    pollId || getPidFromURL() || localStorage.getItem(LS_PID_KEY) || "";
+  const getActivePid = useCallback((): string =>
+    pollId || getPidFromURL() || localStorage.getItem(LS_PID_KEY) || "", [pollId]);
 
   const setPidEverywhere = (pid: string) => {
     if (!pid) return;
@@ -199,7 +259,6 @@ export default function App() {
   );
   const isClosed = manualClosed || autoClosed;
 
-  const now = Date.now();
   const baseVisible = useMemo(() => {
     if (visibilityMode === "always") return true;
     if (visibilityMode === "hidden") return false;
@@ -224,7 +283,7 @@ export default function App() {
     u.hash = "#student";
     u.searchParams.set("v", String(linkVersion));
     return u.toString();
-  }, [pollId, linkVersion]);
+  }, [getActivePid, linkVersion]);
 
   const copyStudentLink = () =>
     navigator.clipboard.writeText(studentLink).then(() => setSaveHint("학생용 링크를 복사했어요."));
@@ -250,7 +309,6 @@ export default function App() {
     }
   };
 
-  /** addOption: 서버 트랜잭션만 (낙관적 업데이트 제거) */
   const addOption = async () => {
     try {
       setIsWorking(true);
@@ -276,10 +334,16 @@ export default function App() {
     }
   };
 
+  const debounceTimer = useRef<NodeJS.Timeout | null>(null);
   const setOptionLabel = (id: string, label: string) => {
     setOptions((prev: Option[]) => {
       const next = prev.map((o: Option) => (o.id === id ? { ...o, label } : o));
-      void patchPoll({ options: next });
+      
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+      debounceTimer.current = setTimeout(() => {
+        void patchPoll({ options: next });
+      }, 500); // 500ms 디바운싱 적용
+
       return next;
     });
   };
@@ -365,29 +429,30 @@ export default function App() {
     return voterName.trim();
   };
 
-  const submitVote = async () => {
+  const submitVote = async (): Promise<boolean> => {
     try {
       setIsWorking(true);
       await ensureAuth();
       const pid = await ensurePid();
-      if (manualClosed || (expectedVoters > 0 && Object.keys(ballots).length >= expectedVoters)) {
-        alert("투표가 마감되었습니다.");
-        return;
-      }
 
       const key = getStudentKey(pid, anonymous);
-      if (!key) { alert("이름/번호를 입력하세요."); return; }
-      if (selected.length === 0) { alert("선택한 보기가 없습니다."); return; }
+      if (!key) { alert("이름/번호를 입력하세요."); return false; }
+      if (selected.length === 0) { alert("선택한 보기가 없습니다."); return false; }
 
       const res = await runTransaction(ref(db, pollPath(pid)), (data: any) => {
         if (!data) return data;
+        
+        // 트랜잭션 내부에서 실시간 마감 상태 체크
+        if (data.manualClosed || (data.expectedVoters > 0 && Object.keys(data.ballots || {}).length >= data.expectedVoters)) {
+          return; // 트랜잭션 취소 (마감됨)
+        }
+
         const ballotsObj = data.ballots || {};
-        if (ballotsObj[key]) return data;
+        if (ballotsObj[key]) return data; // 이미 투표함
 
         const ids = selected.slice(0, data.voteLimit || 1);
         const nowMs = Date.now();
 
-        // ✅ undefined 대신 null
         ballotsObj[key] = {
           ids,
           at: nowMs,
@@ -406,12 +471,15 @@ export default function App() {
       if ((res as any)?.committed) {
         setVoterName("");
         setSelected([]);
+        return true;
       } else {
-        alert("이미 투표했습니다.");
+        alert("이미 투표했거나 마감되었습니다.");
+        return false;
       }
     } catch (e) {
       console.error(e);
       alert("제출 중 오류가 발생했습니다.");
+      return false;
     } finally {
       setIsWorking(false);
     }
@@ -573,6 +641,38 @@ export default function App() {
     return <div className="min-h-screen grid place-items-center text-gray-500">초기화 중입니다…</div>;
   }
 
+  // 관리자 모드 접속 시 인증 화면 표시
+  if (viewMode === "admin" && !adminAuthed) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-white to-gray-50 flex items-center justify-center">
+        <form 
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (pinInput === ADMIN_PIN) setAdminAuthed(true);
+            else alert("비밀번호가 일치하지 않습니다.");
+          }} 
+          className="bg-white p-8 rounded-2xl shadow-lg flex flex-col gap-4 max-w-sm w-full"
+        >
+          <div className="flex items-center gap-3 mb-2">
+            <div className="h-10 w-10 rounded-2xl bg-indigo-600 text-white grid place-items-center font-bold shadow">V</div>
+            <h2 className="text-xl font-bold text-gray-800">관리자 접속</h2>
+          </div>
+          <p className="text-sm text-gray-500">설정된 관리자 비밀번호(PIN)를 입력하세요.</p>
+          <input 
+            type="password" 
+            placeholder="비밀번호 입력" 
+            value={pinInput}
+            onChange={(e) => setPinInput(e.target.value)}
+            className="border p-3 rounded-xl outline-none focus:ring-2 focus:ring-indigo-300"
+          />
+          <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white p-3 rounded-xl shadow mt-2">
+            인증하기
+          </button>
+        </form>
+      </div>
+    );
+  }
+
   const pidReady = !!getActivePid();
 
   return (
@@ -684,7 +784,7 @@ export default function App() {
 }
 
 /* ========= Admin ========= */
-function AdminView(props: any) {
+function AdminView(props: AdminViewProps) {
   const {
     desc, setDesc,
     voteLimit, setVoteLimit,
@@ -795,7 +895,7 @@ function AdminView(props: any) {
           </div>
         </div>
 
-        {/* 보기(옵션) — 저장 버튼은 여기만 유지 */}
+        {/* 보기(옵션) */}
         <div className="bg-white rounded-2xl shadow p-4">
           <div className="flex items-center justify-between">
             <h2 className="font-semibold">보기(옵션)</h2>
@@ -944,7 +1044,7 @@ function AdminView(props: any) {
 }
 
 /* ========= Student ========= */
-function StudentView(props: any) {
+function StudentView(props: StudentViewProps) {
   const {
     desc, options, voteLimit, anonymous,
     visibilityMode, deadlineAt, isVisible,
@@ -954,7 +1054,13 @@ function StudentView(props: any) {
   } = props;
 
   const [submitted, setSubmitted] = useState(false);
-  const onSubmit = () => { submitVote(); setSubmitted(true); };
+  
+  const onSubmit = async () => { 
+    const success = await submitVote(); 
+    if (success) {
+      setSubmitted(true); 
+    }
+  };
 
   return (
     <main className="max-w-3xl mx-auto px-4 py-6 space-y-6">
